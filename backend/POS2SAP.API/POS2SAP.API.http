@@ -1,0 +1,6 @@
+@POS2SAP.API_HostAddress = http://localhost:5163
+
+GET {{POS2SAP.API_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

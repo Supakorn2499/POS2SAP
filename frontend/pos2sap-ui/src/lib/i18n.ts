@@ -1,0 +1,118 @@
+export type Lang = 'en' | 'th';
+export const LANG_STORAGE_KEY = 'pos2sapLang';
+
+const translations: Record<string, { en: string; th: string }> = {
+  dashboard: { en: 'Dashboard', th: 'Dashboard' },
+  monitor: { en: 'Monitor', th: 'Monitor' },
+  config: { en: 'Config', th: 'ตั้งค่า' },
+  logout: { en: 'Logout', th: 'ออกจากระบบ' },
+  language: { en: 'Language', th: 'ภาษา' },
+  loginTitle: { en: 'Sign in to POS2SAP', th: 'เข้าสู่ระบบ POS2SAP' },
+  loginSubtitle: { en: 'Please use staff login credentials.', th: 'กรุณาใช้บัญชีจากตาราง staffs' },
+  username: { en: 'Username', th: 'ชื่อผู้ใช้งาน' },
+  password: { en: 'Password', th: 'รหัสผ่าน' },
+  passwordPlaceholder: { en: 'staffpassword', th: 'staffpassword' },
+  showPassword: { en: 'Show password', th: 'แสดงรหัสผ่าน' },
+  hidePassword: { en: 'Hide password', th: 'ซ่อนรหัสผ่าน' },
+  loginButton: { en: 'Sign in', th: 'เข้าสู่ระบบ' },
+  loggingIn: { en: 'Signing in...', th: 'กำลังเข้าสู่ระบบ...' },
+  loginFailed: { en: 'Unable to sign in. Please check your credentials.', th: 'ไม่สามารถเข้าสู่ระบบได้ กรุณาตรวจสอบข้อมูลอีกครั้ง' },
+  loading: { en: 'Loading...', th: 'กำลังโหลด...' },
+  noData: { en: 'No data', th: 'ไม่มีข้อมูล' },
+  allStatuses: { en: 'All statuses', th: 'ทั้งหมด' },
+  branch: { en: 'Branch', th: 'สาขา' },
+  status: { en: 'Status', th: 'สถานะ' },
+  pending: { en: 'Pending', th: 'รอส่ง' },
+  processing: { en: 'Processing', th: 'กำลังส่ง' },
+  success: { en: 'Success', th: 'สำเร็จ' },
+  failed: { en: 'Failed', th: 'ล้มเหลว' },
+  retry: { en: 'Retry', th: 'รอ Retry' },
+  searchPlaceholder: { en: 'Search bill, branch...', th: 'ค้นหาเลขที่บิล, สาขา...' },
+  searchButton: { en: 'Search', th: 'ค้นหา' },
+  clearButton: { en: 'Clear', th: 'ล้าง' },
+  details: { en: 'Details', th: 'รายละเอียด' },
+  resend: { en: 'Resend', th: 'ส่งใหม่' },
+  previous: { en: 'Previous', th: 'ก่อนหน้า' },
+  next: { en: 'Next', th: 'ถัดไป' },
+  pageOf: { en: 'Page {page} / {total}', th: 'หน้า {page} / {total}' },
+  showingRecords: { en: 'Showing {count} of {total} records', th: 'แสดง {count} จาก {total} รายการ' },
+  noRecentLogs: { en: 'No recent logs available', th: 'ไม่มีข้อมูล Log ล่าสุด' },
+  allBranches: { en: 'All branches', th: 'ทุกสาขา' },
+  to: { en: 'To', th: 'ถึง' },
+  retrySuccess: { en: 'Retry completed', th: 'Retry สำเร็จ' },
+  retryError: { en: 'Retry failed', th: 'Retry ล้มเหลว' },
+  retrying: { en: 'Retrying...', th: 'กำลัง Retry...' },
+  logResendSuccess: { en: 'Log ID: {id} resent', th: 'Log ID: {id} ถูกส่งใหม่แล้ว' },
+  resendFailed: { en: 'Resend failed (ID: {id})', th: 'Resend ล้มเหลว (ID: {id})' },
+  triggerAll: { en: 'Trigger all', th: 'Trigger ส่งทั้งหมด' },
+  triggerAllSending: { en: 'Triggering...', th: 'กำลังส่ง...' },
+  triggerError: { en: 'Trigger failed', th: 'Trigger ล้มเหลว' },
+  triggerSuccess: { en: 'Trigger completed successfully. Sent {sent} records.', th: 'ส่งสำเร็จ {sent} รายการ' },
+  importFromPOS: { en: 'Import from POS', th: 'Import จาก POS' },
+  importing: { en: 'Importing...', th: 'กำลัง Import...' },
+  importError: { en: 'Import failed', th: 'Import ล้มเหลว' },
+  importNoData: { en: 'No new data from POS', th: 'ไม่พบข้อมูลใหม่จาก POS ในเดือนนี้' },
+  importAllImported: { en: 'Found {fetched} records, but all were already imported', th: 'พบ {fetched} รายการ แต่ถูก import ไปแล้วทั้งหมด' },
+  loadError: { en: 'Unable to load data', th: 'ไม่สามารถโหลดข้อมูลได้' },
+  topFailedBranches: { en: 'Branches with most failures', th: 'สาขาส่งล้มเหลวสูงสุด' },
+  topBranches: { en: 'Top sending branches', th: 'สาขาส่งข้อมูลสูงสุด' },
+  dashboardSubtitle: { en: 'Overview for {month}. Use import and trigger to sync POS data.', th: 'สรุปภาพรวมสำหรับ {month} ใช้ปุ่ม import และ trigger เพื่อซิงค์ข้อมูล POS' },
+  code: { en: 'Code', th: 'รหัส' },
+  total: { en: 'Total', th: 'รวม' },
+  actions: { en: 'Actions', th: 'การกระทำ' },
+  detailBack: { en: 'Back', th: 'กลับ' },
+  detailTitle: { en: 'Detail', th: 'รายละเอียด' },
+  detailId: { en: 'ID', th: 'ID' },
+  posDocNo: { en: 'POS Doc No', th: 'เลขที่บิล POS' },
+  billDate: { en: 'Bill Date', th: 'วันที่บิล' },
+  branchLabel: { en: 'Branch', th: 'สาขา' },
+  channel: { en: 'Channel', th: 'ช่องทาง' },
+  sapDocNum: { en: 'SAP DocNum', th: 'SAP DocNum' },
+  totalAmount: { en: 'Total Amount', th: 'ยอดรวม' },
+  retryCount: { en: 'Retry Count', th: 'Retry Count' },
+  sentTime: { en: 'Sent Time', th: 'เวลาส่ง' },
+  sapRequest: { en: 'SAP Request', th: 'JSON ที่ส่งไป SAP' },
+  sapResponse: { en: 'SAP Response', th: 'JSON ที่ SAP ตอบกลับ' },
+  posData: { en: 'POS Data', th: 'ข้อมูล POS ต้นทาง' },
+  currentMonth: { en: 'Current month', th: 'เดือนปัจจุบัน' },
+  lastMonth: { en: 'Last month', th: 'ย้อนหลัง 1 เดือน' },
+  importSuccess: { en: 'Import completed successfully', th: 'Import สำเร็จ' },
+  saveAll: { en: 'Save all', th: 'บันทึกทั้งหมด' },
+  saving: { en: 'Saving...', th: 'กำลังบันทึก...' },
+  save: { en: 'Save', th: 'บันทึก' },
+  saveSuccess: { en: 'Saved successfully', th: 'บันทึกเรียบร้อย' },
+  saveFailed: { en: 'Save failed', th: 'บันทึกไม่สำเร็จ' },
+  configTitle: { en: 'System Settings', th: 'ตั้งค่าระบบ' },
+  configSubtitle: { en: 'Configure SAP connection and schedule', th: 'ตั้งค่าการเชื่อมต่อ SAP และ Schedule' },
+  configPlaceholder: { en: 'Enter value...', th: 'ระบุค่า...' },
+  recentLogsTitle: { en: 'Recent Logs', th: 'Log ล่าสุด' },
+  recentLogsSubtitle: { en: 'Showing FAILED / RETRY entries with filters and paging', th: 'แสดงเฉพาะสถานะ FAILED / RETRY พร้อม filter และ paging' },
+  notFound: { en: 'Not found', th: 'ไม่พบข้อมูล' },
+  'configLabel.sap_url_test': { en: 'SAP URL (Test)', th: 'SAP URL (Test)' },
+  'configLabel.sap_url_prod': { en: 'SAP URL (Production)', th: 'SAP URL (Production)' },
+  'configLabel.sap_env': { en: 'Environment (TST / PRD)', th: 'Environment ที่ใช้งาน (TST / PRD)' },
+  'configLabel.sap_auth_type': { en: 'Auth Type (None / ApiKey / Basic)', th: 'ประเภท Auth (None / ApiKey / Basic)' },
+  'configLabel.sap_api_key': { en: 'SAP API Key', th: 'SAP API Key' },
+  'configLabel.sap_basic_username': { en: 'SAP Basic Auth Username', th: 'SAP Basic Auth Username' },
+  'configLabel.sap_basic_password': { en: 'SAP Basic Auth Password', th: 'SAP Basic Auth Password' },
+  'configLabel.schedule_interval_minutes': { en: 'Schedule interval (minutes)', th: 'ช่วงเวลา Schedule (นาที)' },
+  'configLabel.schedule_enabled': { en: 'Schedule enabled (true / false)', th: 'เปิดใช้ Schedule (true / false)' },
+};
+
+export function getStoredLang(): Lang {
+  const stored = localStorage.getItem(LANG_STORAGE_KEY) as Lang | null;
+  if (stored === 'en' || stored === 'th') return stored;
+  return navigator.language.startsWith('en') ? 'en' : 'th';
+}
+
+export function getTranslation(key: string, lang: Lang, params?: Record<string, string | number>): string {
+  const message = translations[key]?.[lang] ?? key;
+  if (!params) {
+    return message;
+  }
+
+  return Object.entries(params).reduce(
+    (text, [param, value]) => text.replaceAll(`{${param}}`, String(value)),
+    message
+  );
+}

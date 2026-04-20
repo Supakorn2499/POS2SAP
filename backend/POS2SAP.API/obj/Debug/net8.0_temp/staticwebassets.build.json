@@ -1,0 +1,11 @@
+{
+  "Version": 1,
+  "Hash": "0stNOzKiXi9k+gzoTSNhyuwZj0GGikhbM+yvd/e5Xks=",
+  "Source": "POS2SAP.API",
+  "BasePath": "_content/POS2SAP.API",
+  "Mode": "Default",
+  "ManifestType": "Build",
+  "ReferencedProjectsConfiguration": [],
+  "DiscoveryPatterns": [],
+  "Assets": []
+}
