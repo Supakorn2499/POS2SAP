@@ -19,10 +19,10 @@ public class PosDataService : IPosDataService
         _db = db;
     }
 
-    public Task<List<SapArInvoiceRequestDto>> GetPendingBillsAsync()
-        => GetPendingBillsAsyncImpl();
+    public Task<List<SapArInvoiceRequestDto>> GetPendingBillsAsync(int batchSize = 500)
+        => GetPendingBillsAsyncImpl(batchSize);
 
-    private async Task<List<SapArInvoiceRequestDto>> GetPendingBillsAsyncImpl()
+    private async Task<List<SapArInvoiceRequestDto>> GetPendingBillsAsyncImpl(int batchSize = 500)
     {
         // Head: ordertransaction — TransactionStatusID=2 (ชำระแล้ว)
         // NOTE: ตรวจสอบ ProductCode/ProductName ในตาราง products หากชื่อ column ต่างกัน
@@ -30,8 +30,8 @@ public class PosDataService : IPosDataService
         var monthStart = new DateTime(today.Year, today.Month, 1);
         var monthEnd   = monthStart.AddMonths(1); // exclusive upper bound
 
-        var headSql = @"
-            SELECT TOP 500
+        var headSql = $@"
+            SELECT TOP {batchSize}
                 a.ReceiptNumber                                          AS PosDocNo,
                 a.SaleDate                                               AS DocDate,
                 ISNULL(s.BranchNo, CAST(a.ShopID AS NVARCHAR(20)))       AS BranchCode,
@@ -57,8 +57,7 @@ public class PosDataService : IPosDataService
                 NULL                                                     AS DownPaymentAmt,
                 a.TransactionVAT                                         AS VatSum,
                 a.ReceiptPayPrice                                        AS DocTotal,
-                a.TransactionID,
-                a.ComputerID
+                a.TranKey
             FROM ordertransaction a
             LEFT JOIN shop_data s ON s.ShopID = a.ShopID
             LEFT JOIN salemode sm ON sm.SaleModeID = TRY_CAST(a.SaleMode AS INT)
@@ -73,48 +72,42 @@ public class PosDataService : IPosDataService
 
         if (!heads.Any()) return new();
 
-        // Batch fetch all lines in one query instead of N+1
-        var txKeys = heads.Select(h => new { TransactionID = Convert.ToInt32(h.TransactionID), ComputerID = Convert.ToInt32(h.ComputerID) }).ToList();
-        var txIdCsv = string.Join(",", txKeys.Select(k => k.TransactionID.ToString()).Distinct());
+        // Batch fetch all lines in one query — join by TranKey
+        var tranKeyCsv = string.Join(",", heads.Select(h => $"'{h.TranKey}'").Distinct());
 
         var allLinesSql = $@"
             SELECT
-                b.TransactionID,
-                b.ComputerID,
-                c.ProductCode                                            AS ItemCode,
-                c.ProductName                                            AS Dscription,
-                b.Comment                                                AS FreeTxt,
-                b.TotalQty                                               AS Quantity,
-                ISNULL(c.ProductUnitName, '')                            AS UomCode,
-                ISNULL(c.ProductUnitName, '')                            AS UnitMsr,
-                b.PricePerUnit                                           AS PriceBefDi,
-                ISNULL(b.DiscPricePercent, 0)                           AS DiscPrcnt,
-                b.ProductBeforeVAT / NULLIF(b.TotalQty, 0)              AS Price,
+                b.TranKey,
+                ISNULL(c.ProductCode, CAST(b.ProductID AS NVARCHAR(50)))  AS ItemCode,
+                ISNULL(c.ProductName, '')                                  AS Dscription,
+                b.Comment                                                  AS FreeTxt,
+                b.TotalQty                                                 AS Quantity,
+                ISNULL(c.ProductUnitName, '')                              AS UomCode,
+                ISNULL(c.ProductUnitName, '')                              AS UnitMsr,
+                b.PricePerUnit                                             AS PriceBefDi,
+                ISNULL(b.DiscPricePercent, 0)                             AS DiscPrcnt,
+                b.ProductBeforeVAT / NULLIF(b.TotalQty, 0)                AS Price,
                 (b.ProductBeforeVAT + b.ProductVAT) / NULLIF(b.TotalQty, 0) AS PriceAfVat,
-                b.ProductVAT                                             AS VatSum,
-                b.ProductBeforeVAT                                       AS LineTotal,
-                b.ProductBeforeVAT + b.ProductVAT                       AS GTotal,
-                ISNULL(CAST(b.InventoryID AS NVARCHAR(20)), '')          AS WhsCode
+                b.ProductVAT                                               AS VatSum,
+                b.ProductBeforeVAT                                         AS LineTotal,
+                b.ProductBeforeVAT + b.ProductVAT                         AS GTotal,
+                ISNULL(CAST(b.InventoryID AS NVARCHAR(20)), '')            AS WhsCode
             FROM orderdetail b
-            INNER JOIN products c ON b.ProductID = c.ProductID
-            WHERE b.TransactionID IN ({txIdCsv})
-              AND ISNULL(b.Deleted, 0) = 0
-              AND b.OrderStatusID = 0
-              AND b.ComponentLevel = 0
-            ORDER BY b.TransactionID, b.ComputerID, b.DisplayOrdering, b.OrderDetailID";
+            LEFT JOIN products c ON c.ProductID = b.ProductID
+            WHERE b.TranKey IN ({tranKeyCsv})
+            ORDER BY b.TranKey, b.DisplayOrdering, b.OrderDetailID";
 
         var allLines = (await _db.QueryAsync<dynamic>(allLinesSql, commandTimeout: 120)).ToList();
 
-        // Group lines by TransactionID + ComputerID
-        var linesByKey = allLines.GroupBy(l => (TxId: Convert.ToInt32(l.TransactionID), CompId: Convert.ToInt32(l.ComputerID)))
-            .ToDictionary(g => g.Key, g => g.ToList());
+        // Group lines by TranKey
+        var linesByKey = allLines.GroupBy(l => (string)l.TranKey)
+            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
 
         var results = new List<SapArInvoiceRequestDto>();
         foreach (var h in heads)
         {
             var dto = MapHead(h);
-            var key = (TxId: Convert.ToInt32(h.TransactionID), CompId: Convert.ToInt32(h.ComputerID));
-            var lines = linesByKey.GetValueOrDefault(key) ?? new List<dynamic>();
+            var lines = linesByKey.GetValueOrDefault((string)h.TranKey) ?? new List<dynamic>();
             dto.Lines = lines.Select<dynamic, SapArInvoiceLineDto>((l, idx) => MapLine(l, Str(h.PosDocNo), idx, Str(h.BranchCode))).ToList();
             results.Add(dto);
         }
@@ -157,8 +150,7 @@ public class PosDataService : IPosDataService
                 NULL                                                     AS DownPaymentAmt,
                 a.TransactionVAT                                         AS VatSum,
                 a.ReceiptPayPrice                                        AS DocTotal,
-                a.TransactionID,
-                a.ComputerID
+                a.TranKey
             FROM ordertransaction a
             LEFT JOIN shop_data s ON s.ShopID = a.ShopID
             LEFT JOIN salemode sm ON sm.SaleModeID = TRY_CAST(a.SaleMode AS INT)
@@ -176,32 +168,29 @@ public class PosDataService : IPosDataService
 
             var lineSql = @"
                 SELECT
-                    c.ProductCode                                            AS ItemCode,
-                    c.ProductName                                            AS Dscription,
-                    b.Comment                                                AS FreeTxt,
-                    b.TotalQty                                               AS Quantity,
-                    ISNULL(c.ProductUnitName, '')                            AS UomCode,
-                    ISNULL(c.ProductUnitName, '')                            AS UnitMsr,
-                    b.PricePerUnit                                           AS PriceBefDi,
-                    ISNULL(b.DiscPricePercent, 0)                           AS DiscPrcnt,
-                    b.ProductBeforeVAT / NULLIF(b.TotalQty, 0)              AS Price,
+                    ISNULL(c.ProductCode, CAST(b.ProductID AS NVARCHAR(50)))  AS ItemCode,
+                    ISNULL(c.ProductName, '')                                  AS Dscription,
+                    b.Comment                                                  AS FreeTxt,
+                    b.TotalQty                                                 AS Quantity,
+                    ISNULL(c.ProductUnitName, '')                              AS UomCode,
+                    ISNULL(c.ProductUnitName, '')                              AS UnitMsr,
+                    b.PricePerUnit                                             AS PriceBefDi,
+                    ISNULL(b.DiscPricePercent, 0)                             AS DiscPrcnt,
+                    b.ProductBeforeVAT / NULLIF(b.TotalQty, 0)                AS Price,
                     (b.ProductBeforeVAT + b.ProductVAT) / NULLIF(b.TotalQty, 0) AS PriceAfVat,
-                    b.ProductVAT                                             AS VatSum,
-                    b.ProductBeforeVAT                                       AS LineTotal,
-                    b.ProductBeforeVAT + b.ProductVAT                       AS GTotal,
-                    ISNULL(CAST(b.InventoryID AS NVARCHAR(20)), '')          AS WhsCode
+                    b.ProductVAT                                               AS VatSum,
+                    b.ProductBeforeVAT                                         AS LineTotal,
+                    b.ProductBeforeVAT + b.ProductVAT                         AS GTotal,
+                    ISNULL(CAST(b.InventoryID AS NVARCHAR(20)), '')            AS WhsCode
                 FROM orderdetail b
-                INNER JOIN products c ON b.ProductID = c.ProductID
-                WHERE b.TransactionID = @TransactionID
-                  AND b.ComputerID    = @ComputerID
+                LEFT JOIN products c ON c.ProductID = b.ProductID
+                WHERE b.TranKey = @TranKey
                   AND ISNULL(b.Deleted, 0) = 0
-                  AND b.OrderStatusID = 0
-                  AND b.ComponentLevel = 0
+                  AND ISNULL(b.ComponentLevel, 0) = 0
                 ORDER BY b.DisplayOrdering, b.OrderDetailID";
 
             var lines = (await _db.QueryAsync<dynamic>(lineSql, new {
-                TransactionID = Convert.ToInt32(h.TransactionID),
-                ComputerID    = Convert.ToInt32(h.ComputerID)
+                TranKey = (string)h.TranKey
             })).ToList();
             dto.Lines = lines.Select<dynamic, SapArInvoiceLineDto>((l, idx) => MapLine(l, Str(h.PosDocNo), idx, Str(h.BranchCode))).ToList();
             results.Add(dto);

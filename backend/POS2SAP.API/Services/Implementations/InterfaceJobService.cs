@@ -69,12 +69,30 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
         var monitor = scope.ServiceProvider.GetRequiredService<IInterfaceMonitorService>();
         var posData = scope.ServiceProvider.GetRequiredService<IPosDataService>();
 
+        var docNoList = docNos?.ToList();
+
+        // 1. Clear existing PENDING/RETRY logs before re-import
+        try
+        {
+            var deleted = await monitor.DeleteLogsByStatusAsync(docNoList);
+            if (deleted > 0)
+                _logger.LogInformation("ImportPreview: cleared {Deleted} PENDING/RETRY logs before re-import", deleted);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "ImportPreview: could not clear existing logs, proceeding anyway");
+        }
+
+        // 2. Fetch fresh data from POS
+        var config = await monitor.GetConfigDictAsync();
+        var batchSize = int.TryParse(config.GetValueOrDefault(gbVar.CfgImportBatchSize, "500"), out var bs) && bs > 0 ? bs : 500;
+
         List<DTOs.Sap.SapArInvoiceRequestDto> bills;
         try
         {
-            bills = docNos?.Any() == true
-                ? await posData.GetBillsByDocNosAsync(docNos)
-                : await posData.GetPendingBillsAsync();
+            bills = docNoList?.Count > 0
+                ? await posData.GetBillsByDocNosAsync(docNoList)
+                : await posData.GetPendingBillsAsync(batchSize);
         }
         catch (Exception ex)
         {
@@ -82,18 +100,19 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
             return (0, 0, ex.Message);
         }
 
-        // Dedup: ดึง pos_doc_no ที่เคย import แล้ว (ยกเว้น FAILED) เพื่อข้ามซ้ำ
-        var existingDocNos = new HashSet<string>();
+        // 3. Skip bills already in SUCCESS/PROCESSING (never overwrite committed records)
+        var protectedDocNos = new HashSet<string>();
         try
         {
-            var existSql = @"SELECT pos_doc_no FROM interface_logs WHERE status NOT IN ('FAILED')";
+            var existSql = @"SELECT pos_doc_no FROM interface_logs
+                             WHERE status IN ('SUCCESS', 'PROCESSING', 'FAILED')";
             using var dbConn = new Microsoft.Data.SqlClient.SqlConnection(Common.gbVar.MainConstr);
             var existing = await dbConn.QueryAsync<string>(existSql);
-            existingDocNos = new HashSet<string>(existing, StringComparer.OrdinalIgnoreCase);
+            protectedDocNos = new HashSet<string>(existing, StringComparer.OrdinalIgnoreCase);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "ImportPreview: could not check existing logs, will import all");
+            _logger.LogWarning(ex, "ImportPreview: could not check protected logs, will import all");
         }
 
         int imported = 0;
@@ -101,8 +120,7 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
         string? lastError = null;
         foreach (var bill in bills)
         {
-            // ข้ามบิลที่เคย import แล้ว
-            if (existingDocNos.Contains(bill.Head.DocNum))
+            if (protectedDocNos.Contains(bill.Head.DocNum))
             {
                 skipped++;
                 continue;

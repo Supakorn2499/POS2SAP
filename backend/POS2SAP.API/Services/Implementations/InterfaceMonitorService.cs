@@ -204,6 +204,28 @@ public class InterfaceMonitorService : IInterfaceMonitorService
         });
     }
 
+    public async Task<int> DeleteLogsByStatusAsync(IEnumerable<string>? docNos = null, IEnumerable<string>? statuses = null)
+    {
+        var deleteStatuses = (statuses?.ToList() is { Count: > 0 } s)
+            ? s
+            : new List<string> { gbVar.StatusPending, gbVar.StatusRetry };
+
+        var docNoList = docNos?.ToList();
+
+        if (docNoList is { Count: > 0 })
+        {
+            return await _db.ExecuteAsync(
+                @"DELETE FROM interface_logs
+                  WHERE status IN @Statuses
+                    AND pos_doc_no IN @DocNos",
+                new { Statuses = deleteStatuses, DocNos = docNoList });
+        }
+
+        return await _db.ExecuteAsync(
+            "DELETE FROM interface_logs WHERE status IN @Statuses",
+            new { Statuses = deleteStatuses });
+    }
+
     // ------------------------------------------------------------------ Dashboard
 
     public async Task<DashboardSummaryDto> GetDashboardAsync(int monthOffset = 0)

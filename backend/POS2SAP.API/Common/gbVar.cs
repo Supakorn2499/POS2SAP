@@ -29,4 +29,5 @@ public static class gbVar
     public const string CfgScheduleIntervalMinutes = "schedule_interval_minutes";
     public const string CfgScheduleEnabled         = "schedule_enabled";
     public const string CfgMaxRetryCount           = "max_retry_count";
+    public const string CfgImportBatchSize         = "import_batch_size";
 }
