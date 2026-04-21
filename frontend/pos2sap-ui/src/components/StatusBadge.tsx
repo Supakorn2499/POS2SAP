@@ -18,7 +18,9 @@ interface Props {
 
 export function StatusBadge({ status, size = 'md' }: Props) {
   const { t } = useLanguage();
-  const config = statusConfig[status as InterfaceStatus];
+  // Extract base status (handle cases with extra text after space)
+  const baseStatus = (status as string).split(' ')[0].toUpperCase() as InterfaceStatus;
+  const config = statusConfig[baseStatus];
   const label = config ? t(config.labelKey) : String(status);
 
   return (

@@ -28,6 +28,7 @@ export default function LoginPage() {
       }
 
       localStorage.setItem('pos2sapUser', JSON.stringify(user));
+      localStorage.setItem('pos2sapToken', user.accessToken);
       login();
       navigate('/dashboard', { replace: true });
     } catch (err) {

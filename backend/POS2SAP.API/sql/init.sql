@@ -102,3 +102,26 @@ BEGIN
 
     PRINT 'Seeded sample interface_logs for dashboard';
 END
+
+-- --------------------------------------------------------
+-- Table: refresh_tokens
+-- --------------------------------------------------------
+IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='refresh_tokens' AND xtype='U')
+BEGIN
+    CREATE TABLE refresh_tokens (
+        id              INT             NOT NULL PRIMARY KEY IDENTITY(1,1),
+        staff_login     NVARCHAR(100)   NOT NULL UNIQUE,
+        token           NVARCHAR(MAX)   NOT NULL,
+        expires_at      DATETIME2       NOT NULL,
+        created_at      DATETIME2       NOT NULL DEFAULT GETDATE(),
+        updated_at      DATETIME2       NOT NULL DEFAULT GETDATE()
+    );
+
+    CREATE INDEX IX_refresh_tokens_staff_login ON refresh_tokens (staff_login);
+    CREATE INDEX IX_refresh_tokens_expires_at  ON refresh_tokens (expires_at);
+
+    PRINT 'Created table: refresh_tokens';
+END
+ELSE
+    PRINT 'Table already exists: refresh_tokens';
+

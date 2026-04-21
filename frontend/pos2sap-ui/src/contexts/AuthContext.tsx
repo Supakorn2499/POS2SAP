@@ -10,7 +10,7 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: PropsWithChildren) {
   const [authenticated, setAuthenticated] = useState<boolean>(
-    () => localStorage.getItem('pos2sapAuth') === 'true'
+    () => localStorage.getItem('pos2sapAuth') === 'true' && !!localStorage.getItem('pos2sapToken')
   );
 
   const login = () => {
@@ -21,6 +21,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const logout = () => {
     localStorage.removeItem('pos2sapAuth');
     localStorage.removeItem('pos2sapUser');
+    localStorage.removeItem('pos2sapToken');
     setAuthenticated(false);
   };
 

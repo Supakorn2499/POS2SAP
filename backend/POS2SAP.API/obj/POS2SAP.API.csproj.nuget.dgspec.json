@@ -57,9 +57,21 @@
         "net8.0": {
           "targetAlias": "net8.0",
           "dependencies": {
+            "AspNetCoreRateLimit": {
+              "target": "Package",
+              "version": "[4.0.2, )"
+            },
+            "BCrypt.Net-Core": {
+              "target": "Package",
+              "version": "[1.6.0, )"
+            },
             "Dapper": {
               "target": "Package",
               "version": "[2.1.72, )"
+            },
+            "Microsoft.AspNetCore.Authentication.JwtBearer": {
+              "target": "Package",
+              "version": "[8.0.10, )"
             },
             "Microsoft.AspNetCore.OpenApi": {
               "target": "Package",
@@ -69,6 +81,10 @@
               "target": "Package",
               "version": "[7.0.0, )"
             },
+            "Microsoft.IdentityModel.Protocols.OpenIdConnect": {
+              "target": "Package",
+              "version": "[8.16.0, )"
+            },
             "Serilog.AspNetCore": {
               "target": "Package",
               "version": "[8.0.2, )"
@@ -76,6 +92,10 @@
             "Swashbuckle.AspNetCore": {
               "target": "Package",
               "version": "[6.9.0, )"
+            },
+            "System.IdentityModel.Tokens.Jwt": {
+              "target": "Package",
+              "version": "[8.16.0, )"
             },
             "Ulid": {
               "target": "Package",

@@ -1,0 +1,84 @@
+2026-04-21 16:00:53.034 +07:00 [INF] User profile is available. Using 'C:\Users\Thinkpad\AppData\Local\ASP.NET\DataProtection-Keys' as key repository and Windows DPAPI to encrypt keys at rest.
+2026-04-21 16:00:53.595 +07:00 [INF] InterfaceJobService started
+2026-04-21 16:00:54.635 +07:00 [INF] Now listening on: http://localhost:5163
+2026-04-21 16:00:54.647 +07:00 [INF] Application started. Press Ctrl+C to shut down.
+2026-04-21 16:00:54.654 +07:00 [INF] Hosting environment: Development
+2026-04-21 16:00:54.659 +07:00 [INF] Content root path: D:\SUDEV\Projects\POS2SAP\backend\POS2SAP.API
+2026-04-21 16:03:33.164 +07:00 [INF] Request starting HTTP/1.1 GET http://localhost:5163/api/monitor/logs?status=FAILED,RETRY&dateFrom=2026-03-31&dateTo=2026-04-30&page=1&pageSize=10&sortBy=created_at&sortDirection=desc - null null
+2026-04-21 16:03:33.164 +07:00 [INF] Request starting HTTP/1.1 GET http://localhost:5163/api/monitor/dashboard?monthOffset=0 - null null
+2026-04-21 16:03:33.164 +07:00 [INF] Request starting HTTP/1.1 GET http://localhost:5163/api/monitor/branches - null null
+2026-04-21 16:03:33.210 +07:00 [WRN] Unauthorized access attempt to /api/monitor/dashboard
+2026-04-21 16:03:33.210 +07:00 [WRN] Unauthorized access attempt to /api/monitor/logs
+2026-04-21 16:03:33.210 +07:00 [WRN] Unauthorized access attempt to /api/monitor/branches
+2026-04-21 16:03:33.229 +07:00 [INF] HTTP GET /api/monitor/branches responded 401 in 37.0425 ms
+2026-04-21 16:03:33.229 +07:00 [INF] HTTP GET /api/monitor/logs responded 401 in 37.0288 ms
+2026-04-21 16:03:33.236 +07:00 [INF] Request finished HTTP/1.1 GET http://localhost:5163/api/monitor/branches - 401 null application/json; charset=utf-8 74.2758ms
+2026-04-21 16:03:33.229 +07:00 [INF] HTTP GET /api/monitor/dashboard responded 401 in 37.0259 ms
+2026-04-21 16:03:33.237 +07:00 [INF] Request finished HTTP/1.1 GET http://localhost:5163/api/monitor/logs?status=FAILED,RETRY&dateFrom=2026-03-31&dateTo=2026-04-30&page=1&pageSize=10&sortBy=created_at&sortDirection=desc - 401 null application/json; charset=utf-8 75.2577ms
+2026-04-21 16:03:33.245 +07:00 [INF] Request finished HTTP/1.1 GET http://localhost:5163/api/monitor/dashboard?monthOffset=0 - 401 null application/json; charset=utf-8 83.5834ms
+2026-04-21 16:03:34.247 +07:00 [INF] Request starting HTTP/1.1 GET http://localhost:5163/api/monitor/branches - null null
+2026-04-21 16:03:34.247 +07:00 [INF] Request starting HTTP/1.1 GET http://localhost:5163/api/monitor/logs?status=FAILED,RETRY&dateFrom=2026-03-31&dateTo=2026-04-30&page=1&pageSize=10&sortBy=created_at&sortDirection=desc - null null
+2026-04-21 16:03:34.261 +07:00 [WRN] Unauthorized access attempt to /api/monitor/branches
+2026-04-21 16:03:34.261 +07:00 [WRN] Unauthorized access attempt to /api/monitor/logs
+2026-04-21 16:03:34.261 +07:00 [INF] Request starting HTTP/1.1 GET http://localhost:5163/api/monitor/dashboard?monthOffset=0 - null null
+2026-04-21 16:03:34.262 +07:00 [INF] HTTP GET /api/monitor/branches responded 401 in 2.9369 ms
+2026-04-21 16:03:34.263 +07:00 [INF] HTTP GET /api/monitor/logs responded 401 in 3.2178 ms
+2026-04-21 16:03:34.265 +07:00 [WRN] Unauthorized access attempt to /api/monitor/dashboard
+2026-04-21 16:03:34.280 +07:00 [INF] HTTP GET /api/monitor/dashboard responded 401 in 14.6396 ms
+2026-04-21 16:03:34.281 +07:00 [INF] Request finished HTTP/1.1 GET http://localhost:5163/api/monitor/dashboard?monthOffset=0 - 401 null application/json; charset=utf-8 19.7131ms
+2026-04-21 16:03:34.268 +07:00 [INF] Request finished HTTP/1.1 GET http://localhost:5163/api/monitor/branches - 401 null application/json; charset=utf-8 21.2035ms
+2026-04-21 16:03:34.279 +07:00 [INF] Request finished HTTP/1.1 GET http://localhost:5163/api/monitor/logs?status=FAILED,RETRY&dateFrom=2026-03-31&dateTo=2026-04-30&page=1&pageSize=10&sortBy=created_at&sortDirection=desc - 401 null application/json; charset=utf-8 32.1956ms
+2026-04-21 16:09:56.474 +07:00 [INF] Request starting HTTP/1.1 POST http://localhost:5163/api/auth/login - application/json 50
+2026-04-21 16:09:56.482 +07:00 [INF] CORS policy execution successful.
+2026-04-21 16:09:56.793 +07:00 [INF] Executing endpoint 'POS2SAP.API.Controllers.AuthController.Login (POS2SAP.API)'
+2026-04-21 16:09:56.816 +07:00 [INF] Route matched with {action = "Login", controller = "Auth"}. Executing controller action with signature System.Threading.Tasks.Task`1[Microsoft.AspNetCore.Mvc.ActionResult`1[POS2SAP.API.Common.ApiResponse`1[POS2SAP.API.DTOs.Auth.LoginResultDto]]] Login(POS2SAP.API.DTOs.Auth.LoginRequestDto) on controller POS2SAP.API.Controllers.AuthController (POS2SAP.API).
+2026-04-21 16:09:56.972 +07:00 [INF] Executed action POS2SAP.API.Controllers.AuthController.Login (POS2SAP.API) in 147.1914ms
+2026-04-21 16:09:56.977 +07:00 [INF] Executed endpoint 'POS2SAP.API.Controllers.AuthController.Login (POS2SAP.API)'
+2026-04-21 16:09:56.982 +07:00 [ERR] HTTP POST /api/auth/login responded 500 in 501.6182 ms
+BCrypt.Net.SaltParseException: Invalid salt version
+   at BCrypt.Net.BCrypt.HashPassword(String input, String salt)
+   at BCrypt.Net.BCrypt.Verify(String text, String hash)
+   at POS2SAP.API.Controllers.AuthController.Login(LoginRequestDto request) in D:\SUDEV\Projects\POS2SAP\backend\POS2SAP.API\Controllers\AuthController.cs:line 59
+   at lambda_method7(Closure, Object)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ActionMethodExecutor.AwaitableObjectResultExecutor.Execute(ActionContext actionContext, IActionResultTypeMapper mapper, ObjectMethodExecutor executor, Object controller, Object[] arguments)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeActionMethodAsync>g__Awaited|12_0(ControllerActionInvoker invoker, ValueTask`1 actionResultValueTask)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeNextActionFilterAsync>g__Awaited|10_0(ControllerActionInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.Rethrow(ActionExecutedContextSealed context)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.Next(State& next, Scope& scope, Object& state, Boolean& isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeInnerFilterAsync>g__Awaited|13_0(ControllerActionInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeFilterPipelineAsync>g__Awaited|20_0(ResourceInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeAsync>g__Logged|17_1(ResourceInvoker invoker)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeAsync>g__Logged|17_1(ResourceInvoker invoker)
+   at Microsoft.AspNetCore.Routing.EndpointMiddleware.<Invoke>g__AwaitRequestTask|7_0(Endpoint endpoint, Task requestTask, ILogger logger)
+   at Microsoft.AspNetCore.Authorization.AuthorizationMiddleware.Invoke(HttpContext context)
+   at Microsoft.AspNetCore.Authentication.AuthenticationMiddleware.Invoke(HttpContext context)
+   at POS2SAP.API.Middleware.AuthorizationMiddleware.InvokeAsync(HttpContext context) in D:\SUDEV\Projects\POS2SAP\backend\POS2SAP.API\Middleware\AuthenticationMiddleware.cs:line 85
+   at POS2SAP.API.Middleware.JwtAuthMiddleware.InvokeAsync(HttpContext context, IJwtTokenService jwtTokenService) in D:\SUDEV\Projects\POS2SAP\backend\POS2SAP.API\Middleware\AuthenticationMiddleware.cs:line 34
+   at Swashbuckle.AspNetCore.SwaggerUI.SwaggerUIMiddleware.Invoke(HttpContext httpContext)
+   at Swashbuckle.AspNetCore.Swagger.SwaggerMiddleware.Invoke(HttpContext httpContext, ISwaggerProvider swaggerProvider)
+   at Serilog.AspNetCore.RequestLoggingMiddleware.Invoke(HttpContext httpContext)
+2026-04-21 16:09:57.001 +07:00 [ERR] An unhandled exception has occurred while executing the request.
+BCrypt.Net.SaltParseException: Invalid salt version
+   at BCrypt.Net.BCrypt.HashPassword(String input, String salt)
+   at BCrypt.Net.BCrypt.Verify(String text, String hash)
+   at POS2SAP.API.Controllers.AuthController.Login(LoginRequestDto request) in D:\SUDEV\Projects\POS2SAP\backend\POS2SAP.API\Controllers\AuthController.cs:line 59
+   at lambda_method7(Closure, Object)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ActionMethodExecutor.AwaitableObjectResultExecutor.Execute(ActionContext actionContext, IActionResultTypeMapper mapper, ObjectMethodExecutor executor, Object controller, Object[] arguments)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeActionMethodAsync>g__Awaited|12_0(ControllerActionInvoker invoker, ValueTask`1 actionResultValueTask)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeNextActionFilterAsync>g__Awaited|10_0(ControllerActionInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.Rethrow(ActionExecutedContextSealed context)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.Next(State& next, Scope& scope, Object& state, Boolean& isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeInnerFilterAsync>g__Awaited|13_0(ControllerActionInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeFilterPipelineAsync>g__Awaited|20_0(ResourceInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeAsync>g__Logged|17_1(ResourceInvoker invoker)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeAsync>g__Logged|17_1(ResourceInvoker invoker)
+   at Microsoft.AspNetCore.Routing.EndpointMiddleware.<Invoke>g__AwaitRequestTask|7_0(Endpoint endpoint, Task requestTask, ILogger logger)
+   at Microsoft.AspNetCore.Authorization.AuthorizationMiddleware.Invoke(HttpContext context)
+   at Microsoft.AspNetCore.Authentication.AuthenticationMiddleware.Invoke(HttpContext context)
+   at POS2SAP.API.Middleware.AuthorizationMiddleware.InvokeAsync(HttpContext context) in D:\SUDEV\Projects\POS2SAP\backend\POS2SAP.API\Middleware\AuthenticationMiddleware.cs:line 85
+   at POS2SAP.API.Middleware.JwtAuthMiddleware.InvokeAsync(HttpContext context, IJwtTokenService jwtTokenService) in D:\SUDEV\Projects\POS2SAP\backend\POS2SAP.API\Middleware\AuthenticationMiddleware.cs:line 34
+   at Swashbuckle.AspNetCore.SwaggerUI.SwaggerUIMiddleware.Invoke(HttpContext httpContext)
+   at Swashbuckle.AspNetCore.Swagger.SwaggerMiddleware.Invoke(HttpContext httpContext, ISwaggerProvider swaggerProvider)
+   at Serilog.AspNetCore.RequestLoggingMiddleware.Invoke(HttpContext httpContext)
+   at Microsoft.AspNetCore.Diagnostics.DeveloperExceptionPageMiddlewareImpl.Invoke(HttpContext context)
+2026-04-21 16:09:57.016 +07:00 [INF] Request finished HTTP/1.1 POST http://localhost:5163/api/auth/login - 500 null text/plain; charset=utf-8 541.1278ms

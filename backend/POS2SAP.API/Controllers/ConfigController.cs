@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using POS2SAP.API.Common;
 using POS2SAP.API.DTOs.Config;
 using POS2SAP.API.Services.Interfaces;
@@ -7,6 +8,7 @@ namespace POS2SAP.API.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize]
 public class ConfigController : ControllerBase
 {
     private readonly IInterfaceMonitorService _monitor;

@@ -175,3 +175,8 @@ D:\SUDEV\Projects\POS2SAP\backend\POS2SAP.API\obj\Debug\net8.0\refint\POS2SAP.AP
 D:\SUDEV\Projects\POS2SAP\backend\POS2SAP.API\obj\Debug\net8.0\POS2SAP.API.pdb
 D:\SUDEV\Projects\POS2SAP\backend\POS2SAP.API\obj\Debug\net8.0\POS2SAP.API.genruntimeconfig.cache
 D:\SUDEV\Projects\POS2SAP\backend\POS2SAP.API\obj\Debug\net8.0\ref\POS2SAP.API.dll
+D:\SUDEV\Projects\POS2SAP\backend\POS2SAP.API\obj\Debug\net8.0\POS2SAP.API.sourcelink.json
+D:\SUDEV\Projects\POS2SAP\backend\POS2SAP.API\bin\Debug\net8.0\AspNetCoreRateLimit.dll
+D:\SUDEV\Projects\POS2SAP\backend\POS2SAP.API\bin\Debug\net8.0\BCrypt.Net-Core.dll
+D:\SUDEV\Projects\POS2SAP\backend\POS2SAP.API\bin\Debug\net8.0\Microsoft.AspNetCore.Authentication.JwtBearer.dll
+D:\SUDEV\Projects\POS2SAP\backend\POS2SAP.API\bin\Debug\net8.0\Newtonsoft.Json.dll
