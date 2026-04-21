@@ -1,0 +1,170 @@
+# ============================================================
+# POS2SAP — root .gitignore (C#/.NET + Node/React)
+# ============================================================
+
+# -------- .NET / Visual Studio --------
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Ll]og/
+[Ll]ogs/
+[Oo]ut/
+msbuild.log
+msbuild.err
+msbuild.wrn
+
+# VS / Rider / user files
+.vs/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/settings.json
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.userprefs
+*.rsuser
+*.DotSettings.user
+
+# Build results
+*.pdb
+*.dll.config
+*.exe
+*.dll
+*.cache
+*.ilk
+*.meta
+*.obj
+*.pch
+*.pgc
+*.pgd
+*.rsp
+*.sbr
+*.tlb
+*.tli
+*.tlh
+*.tmp
+*.tmp_proj
+*_wpftmp.csproj
+*.vspscc
+*.vssscc
+.builds
+*.pidb
+*.svclog
+*.scc
+*.psess
+*.vsp
+*.vspx
+*.sap
+
+# NuGet
+*.nupkg
+*.snupkg
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+*.nuget.props
+*.nuget.targets
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# Test results
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+*.VisualState.xml
+TestResult.xml
+nunit-*.xml
+coverage*.json
+coverage*.xml
+coverage*.info
+*.coverage
+*.coveragexml
+
+# Publish
+publish/
+*.pubxml
+*.pubxml.user
+*.publishproj
+PublishScripts/
+
+# ASP.NET scaffolding / misc
+ScaffoldingReadMe.txt
+StyleCopReport.xml
+
+# Entity Framework
+*.mdf
+*.ldf
+*.ndf
+
+# -------- Node / React / Vite --------
+node_modules/
+dist/
+dist-ssr/
+build/
+out/
+.next/
+.nuxt/
+.cache/
+.parcel-cache/
+.vite/
+*.tsbuildinfo
+
+# Package manager lockfile backups (keep lockfiles themselves)
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Env files (NEVER commit secrets)
+.env
+.env.local
+.env.*.local
+.env.development.local
+.env.production.local
+!.env.example
+
+# -------- OS / Editor --------
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.swp
+*.swo
+*~
+
+# -------- POS2SAP project-specific --------
+# Runtime logs (Serilog daily rolling)
+backend/POS2SAP.API/Logs/
+backend/POS2SAP.API/logs/
+*.log
+
+# Local build/run output captures
+backend/POS2SAP.API/build_output.txt
+backend/POS2SAP.API/build-output.txt
+backend/POS2SAP.API/dotnet-run-output.txt
+build_backend_log.txt
+build_backend_log_utf8.txt
+
+# Local secret overrides — commit appsettings.json only, not local variants
+backend/POS2SAP.API/appsettings.Local.json
+backend/POS2SAP.API/appsettings.*.Local.json
+
+# User secrets (dotnet user-secrets)
+secrets.json

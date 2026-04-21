@@ -55,26 +55,56 @@ public class AuthController : ControllerBase
             return Unauthorized(ApiResponse<LoginResultDto>.Fail("Username หรือ password ไม่ถูกต้อง", statusCode: 401));
         }
 
-        // Verify password using bcrypt
+        // Verify password — supports BCrypt (new) and SHA1 legacy hashes (auto-upgrade on success)
+        var storedHash = (string?)user.StaffPassword;
+        if (string.IsNullOrEmpty(storedHash))
+        {
+            _logger.LogWarning("Login attempt failed: no password hash - {StaffLogin}", request.StaffLogin);
+            return Unauthorized(ApiResponse<LoginResultDto>.Fail("Username หรือ password ไม่ถูกต้อง", statusCode: 401));
+        }
+
+        bool passwordValid;
+        bool isLegacyHash = !storedHash.StartsWith("$2", StringComparison.Ordinal);
+
         try
         {
-            if (string.IsNullOrEmpty((string?)user.StaffPassword))
+            if (isLegacyHash)
             {
-                _logger.LogWarning("Login attempt failed: no password hash - {StaffLogin}", request.StaffLogin);
-                return Unauthorized(ApiResponse<LoginResultDto>.Fail("Username หรือ password ไม่ถูกต้อง", statusCode: 401));
+                passwordValid = VerifyLegacySha1(request.StaffPassword, storedHash);
             }
-
-            bool passwordValid = BCrypt.Net.BCrypt.Verify(request.StaffPassword, (string)user.StaffPassword);
-            if (!passwordValid)
+            else
             {
-                _logger.LogWarning("Login attempt failed: invalid password - {StaffLogin}", request.StaffLogin);
-                return Unauthorized(ApiResponse<LoginResultDto>.Fail("Username หรือ password ไม่ถูกต้อง", statusCode: 401));
+                passwordValid = BCrypt.Net.BCrypt.Verify(request.StaffPassword, storedHash);
             }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "BCrypt verification error for user {StaffLogin}", request.StaffLogin);
+            _logger.LogError(ex, "Password verification error for user {StaffLogin}", request.StaffLogin);
             return Unauthorized(ApiResponse<LoginResultDto>.Fail("Username หรือ password ไม่ถูกต้อง", statusCode: 401));
+        }
+
+        if (!passwordValid)
+        {
+            _logger.LogWarning("Login attempt failed: invalid password - {StaffLogin}", request.StaffLogin);
+            return Unauthorized(ApiResponse<LoginResultDto>.Fail("Username หรือ password ไม่ถูกต้อง", statusCode: 401));
+        }
+
+        // Upgrade legacy SHA1 hash → BCrypt on successful login
+        if (isLegacyHash)
+        {
+            try
+            {
+                var newHash = BCrypt.Net.BCrypt.HashPassword(request.StaffPassword, workFactor: 11);
+                await _dbConnection.ExecuteAsync(
+                    "UPDATE staffs SET StaffPassword = @NewHash, UpdatedAt = GETDATE() WHERE StaffLogin = @StaffLogin",
+                    new { NewHash = newHash, StaffLogin = (string)user.StaffLogin });
+                _logger.LogInformation("Upgraded legacy password hash to BCrypt for {StaffLogin}", request.StaffLogin);
+            }
+            catch (Exception ex)
+            {
+                // Non-fatal: login still succeeds even if upgrade fails
+                _logger.LogWarning(ex, "Failed to upgrade legacy hash for {StaffLogin}", request.StaffLogin);
+            }
         }
 
         // Generate tokens
@@ -195,6 +225,28 @@ public class AuthController : ControllerBase
     private static string HashPassword(string password)
     {
         return BCrypt.Net.BCrypt.HashPassword(password, workFactor: 11);
+    }
+
+    /// <summary>
+    /// Verifies a password against a legacy SHA1 hash from the original POS system.
+    /// Accepts hex (40 chars, upper or lower case) or Base64 encoded SHA1.
+    /// </summary>
+    private static bool VerifyLegacySha1(string password, string storedHash)
+    {
+        if (string.IsNullOrEmpty(storedHash)) return false;
+
+        using var sha1 = SHA1.Create();
+        var bytes = sha1.ComputeHash(Encoding.UTF8.GetBytes(password));
+
+        var hex = Convert.ToHexString(bytes); // upper-case hex
+        if (string.Equals(hex, storedHash, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        var base64 = Convert.ToBase64String(bytes);
+        if (string.Equals(base64, storedHash, StringComparison.Ordinal))
+            return true;
+
+        return false;
     }
 }
 
