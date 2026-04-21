@@ -2,12 +2,13 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { Search, X, Play, RefreshCw } from 'lucide-react';
+import { Search, X, Play, RefreshCw, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import monitorService from '@/services/monitorService';
 import interfaceService from '@/services/interfaceService';
 import { StatusBadge } from '@/components/StatusBadge';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { fmtDate, fmtDatetime, fmt, todayStr, cn } from '@/lib/utils';
 import type { BranchOptionDto, InterfaceLogQueryParams } from '@/types/monitor';
 
@@ -16,6 +17,7 @@ const STATUS_OPTIONS = ['', 'PENDING', 'PROCESSING', 'SUCCESS', 'FAILED', 'RETRY
 export default function MonitorPage() {
   const navigate = useNavigate();
   const { t } = useLanguage();
+  const { username } = useAuth();
 
   // Pending (filter bar state)
   const [pendingSearch, setPendingSearch] = useState('');
@@ -37,6 +39,7 @@ export default function MonitorPage() {
   });
 
   const [triggering, setTriggering] = useState(false);
+  const [simulating, setSimulating] = useState(false);
 
   const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ['monitor-logs', params],
@@ -81,6 +84,19 @@ export default function MonitorPage() {
     }
   }
 
+  async function handleSimulate() {
+    setSimulating(true);
+    try {
+      const result = await monitorService.simulateStatuses();
+      toast.success(result);
+      refetch();
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'เกิดข้อผิดพลาดในการจำลอง');
+    } finally {
+      setSimulating(false);
+    }
+  }
+
   async function handleRetry(id: string, e: React.MouseEvent) {
     e.stopPropagation();
     try {
@@ -100,14 +116,26 @@ export default function MonitorPage() {
           <h1 className="text-xl font-bold">{t('monitor')}</h1>
           <p className="text-sm text-muted-foreground">{t('monitorSubtitle')}</p>
         </div>
-        <button
-          onClick={handleTrigger}
-          disabled={triggering}
-          className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-        >
-          <Play className="h-4 w-4" />
-          {triggering ? t('triggerAllSending') : t('triggerAll')}
-        </button>
+        <div className="flex gap-2">
+          {username === 'vtec' && (
+            <button
+              onClick={handleSimulate}
+              disabled={simulating}
+              className="flex items-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+            >
+              <Zap className="h-4 w-4" />
+              {simulating ? 'กำลังจำลอง...' : 'Simulate Status'}
+            </button>
+          )}
+          <button
+            onClick={handleTrigger}
+            disabled={triggering}
+            className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          >
+            <Play className="h-4 w-4" />
+            {triggering ? t('triggerAllSending') : t('triggerAll')}
+          </button>
+        </div>
       </div>
 
       {/* Filter bar */}

@@ -57,10 +57,15 @@ public class MonitorController : ControllerBase
         return Ok(ApiResponse<DashboardSummaryDto>.Ok(summary));
     }
 
-    /// <summary>DEV ONLY: Simulate random statuses for all logs</summary>
+    /// <summary>DEV ONLY: Simulate random statuses for all logs (vtec user only)</summary>
     [HttpPost("simulate-statuses")]
     public async Task<ActionResult<ApiResponse<string>>> SimulateStatuses()
     {
+        // Check if user is "vtec"
+        var username = User.FindFirst("staffLogin")?.Value;
+        if (username != "vtec")
+            return Unauthorized(ApiResponse<string>.Fail("เฉพาะ user 'vtec' เท่านั้นที่สามารถจำลองได้", statusCode: 403));
+
         var count = await _monitor.SimulateLogStatusesAsync();
         var message = $"Simulated {count} logs with random statuses.";
         return Ok(ApiResponse<string>.Ok(message));

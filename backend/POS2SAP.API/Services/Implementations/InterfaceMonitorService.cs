@@ -55,7 +55,7 @@ public class InterfaceMonitorService : IInterfaceMonitorService
         if (!string.IsNullOrWhiteSpace(p.BranchCode))
         {
             where.Add("branch_code = @BranchCode");
-            param.Add("BranchCode", p.BranchCode.Trim());
+            param.Add("BranchCode", p.BranchCode);
         }
         if (!string.IsNullOrWhiteSpace(p.InterfaceType))
         {
@@ -101,7 +101,7 @@ public class InterfaceMonitorService : IInterfaceMonitorService
                    l.created_at    AS CreatedAt,
                    l.updated_at    AS UpdatedAt
             FROM interface_logs l
-            LEFT JOIN shop_data sd ON CONVERT(NVARCHAR(20), sd.shopid) = l.branch_code
+            LEFT JOIN shop_data sd ON sd.shopcode = l.branch_code
             LEFT JOIN salemode sm ON sm.SaleModeID = TRY_CAST(l.channel AS INT)
             {whereClause}
             ORDER BY {sortBy} {sortDir}
@@ -140,7 +140,7 @@ public class InterfaceMonitorService : IInterfaceMonitorService
                    l.sap_request   AS SapRequest,
                    l.sap_response  AS SapResponse
             FROM interface_logs l
-            LEFT JOIN shop_data sd ON CONVERT(NVARCHAR(20), sd.shopid) = l.branch_code
+            LEFT JOIN shop_data sd ON sd.shopcode = l.branch_code
             LEFT JOIN salemode sm ON sm.SaleModeID = TRY_CAST(l.channel AS INT)
             WHERE l.id = @Id AND l.is_deleted = 0";
 
@@ -268,7 +268,7 @@ public class InterfaceMonitorService : IInterfaceMonitorService
                 SUM(CASE WHEN l.status='SUCCESS' THEN 1 ELSE 0 END) AS Success,
                 SUM(CASE WHEN l.status='FAILED'  THEN 1 ELSE 0 END) AS Failed
             FROM interface_logs l
-            LEFT JOIN shop_data sd ON CONVERT(NVARCHAR(20), sd.shopid) = l.branch_code
+            LEFT JOIN shop_data sd ON sd.shopcode = l.branch_code
             WHERE l.is_deleted = 0
               AND l.branch_code IS NOT NULL
               AND l.created_at >= @DateFrom
@@ -284,7 +284,7 @@ public class InterfaceMonitorService : IInterfaceMonitorService
                 SUM(CASE WHEN l.status='SUCCESS' THEN 1 ELSE 0 END) AS Success,
                 SUM(CASE WHEN l.status='FAILED'  THEN 1 ELSE 0 END) AS Failed
             FROM interface_logs l
-            LEFT JOIN shop_data sd ON CONVERT(NVARCHAR(20), sd.shopid) = l.branch_code
+            LEFT JOIN shop_data sd ON sd.shopcode = l.branch_code
             WHERE l.is_deleted = 0
               AND l.status = 'FAILED'
               AND l.branch_code IS NOT NULL
@@ -312,7 +312,7 @@ public class InterfaceMonitorService : IInterfaceMonitorService
                 l.created_at    AS CreatedAt,
                 l.updated_at    AS UpdatedAt
             FROM interface_logs l
-            LEFT JOIN shop_data sd ON CONVERT(NVARCHAR(20), sd.shopid) = l.branch_code
+            LEFT JOIN shop_data sd ON sd.shopcode = l.branch_code
             LEFT JOIN salemode sm ON sm.SaleModeID = TRY_CAST(l.channel AS INT)
             WHERE l.is_deleted = 0
               AND l.created_at >= @DateFrom
@@ -372,12 +372,14 @@ public class InterfaceMonitorService : IInterfaceMonitorService
     public async Task<List<BranchOptionDto>> GetBranchesAsync()
     {
         var sql = @"
-            SELECT
-                CONVERT(NVARCHAR(20), shopid) AS BranchCode,
-                shopname AS BranchName
-            FROM shop_data
-            WHERE shopid IS NOT NULL
-            ORDER BY shopname";
+            SELECT DISTINCT
+                l.branch_code AS BranchCode,
+                COALESCE(sd.shopname, l.branch_name) AS BranchName
+            FROM interface_logs l
+            LEFT JOIN shop_data sd ON sd.shopcode = l.branch_code
+            WHERE l.is_deleted = 0
+              AND l.branch_code IS NOT NULL
+            ORDER BY COALESCE(sd.shopname, l.branch_name)";
 
         return (await _db.QueryAsync<BranchOptionDto>(sql)).ToList();
     }

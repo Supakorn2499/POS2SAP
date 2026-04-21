@@ -2,7 +2,8 @@ import { createContext, useContext, useMemo, useState, type PropsWithChildren } 
 
 interface AuthContextValue {
   authenticated: boolean;
-  login: () => void;
+  username: string | null;
+  login: (username: string) => void;
   logout: () => void;
 }
 
@@ -12,10 +13,15 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const [authenticated, setAuthenticated] = useState<boolean>(
     () => localStorage.getItem('pos2sapAuth') === 'true' && !!localStorage.getItem('pos2sapToken')
   );
+  const [username, setUsername] = useState<string | null>(
+    () => localStorage.getItem('pos2sapUser')
+  );
 
-  const login = () => {
+  const login = (user: string) => {
     localStorage.setItem('pos2sapAuth', 'true');
+    localStorage.setItem('pos2sapUser', user);
     setAuthenticated(true);
+    setUsername(user);
   };
 
   const logout = () => {
@@ -23,11 +29,12 @@ export function AuthProvider({ children }: PropsWithChildren) {
     localStorage.removeItem('pos2sapUser');
     localStorage.removeItem('pos2sapToken');
     setAuthenticated(false);
+    setUsername(null);
   };
 
   const value = useMemo(
-    () => ({ authenticated, login, logout }),
-    [authenticated]
+    () => ({ authenticated, username, login, logout }),
+    [authenticated, username]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

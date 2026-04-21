@@ -17,6 +17,11 @@ const monitorService = {
     const res = await apiClient.get(`/monitor/logs/${id}`);
     return res.data.data;
   },
+
+  async simulateStatuses(): Promise<string> {
+    const res = await apiClient.post('/monitor/simulate-statuses', {});
+    return res.data.data;
+  },
 };
 
 export default monitorService;

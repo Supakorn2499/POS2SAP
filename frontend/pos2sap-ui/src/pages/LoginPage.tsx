@@ -29,7 +29,7 @@ export default function LoginPage() {
 
       localStorage.setItem('pos2sapUser', JSON.stringify(user));
       localStorage.setItem('pos2sapToken', user.accessToken);
-      login();
+      login(user.staffLogin);
       navigate('/dashboard', { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'เกิดข้อผิดพลาดในการเข้าสู่ระบบ');
