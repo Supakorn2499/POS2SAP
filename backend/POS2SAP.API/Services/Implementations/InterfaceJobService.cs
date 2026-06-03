@@ -126,9 +126,9 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
                 continue;
             }
 
-            try
-            {
-                var posJson = JsonSerializer.Serialize(bill, JsonOpts);
+                try
+                {
+                    var posJson = SerializeAsDocumentArray(bill);
                 var log = new InterfaceLog
                 {
                     PosDocNo   = bill.Head.DocNum,
@@ -176,7 +176,7 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
 
         try
         {
-            var dto = JsonSerializer.Deserialize<DTOs.Sap.SapArInvoiceRequestDto>(detail.SapRequest, JsonOpts);
+            var dto = DeserializeSapRequest(detail.SapRequest);
             if (dto is null) return false;
 
             var (success, sapDocNum, errorMsg, rawResponse) = await sap.PostArInvoiceAsync(dto);
@@ -233,7 +233,7 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
                 };
                 var existing = (await monitor.GetListAsync(existingQuery)).Items.FirstOrDefault(x => x.PosDocNo == bill.Head.DocNum);
 
-                var requestJson = JsonSerializer.Serialize(bill, JsonOpts);
+                var requestJson = SerializeAsDocumentArray(bill);
 
                 if (existing is null)
                 {
@@ -291,5 +291,146 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
 
         _logger.LogInformation("Batch complete: sent={Sent} failed={Failed}", sent, failed);
         return (sent, failed);
+    }
+
+    // ------------------------------------------------------------------ POS JSON helpers
+
+    private static string SerializeAsDocumentArray(DTOs.Sap.SapArInvoiceRequestDto bill)
+    {
+        var h = bill.Head;
+        var doc = new
+        {
+            DocNum = h.DocNum,
+            DocDate = h.DocDate,
+            PymntGroup = h.PymntGroup,
+            DocDueDate = h.DocDueDate,
+            POSID = h.POSID,
+            CardCode = h.CardCode,
+            CardName = h.CardName,
+            CustTaxId = h.CustTaxId,
+            Address = h.Address,
+            CustVatBranch = h.CustVatBranch,
+            CustTel = h.CustTel,
+            CustMemberNo = h.CustMemberNo,
+            DocCur = h.DocCur,
+            BranchCode = h.BranchCode,
+            BranchName = h.BranchName,
+            VatBranch = h.VatBranch,
+            Comments = h.Comments,
+            Channel = h.Channel,
+            CustBillPoint = h.CustBillPoint,
+            CustRedeemPoint = h.CustRedeemPoint,
+            CustBalancePoint = h.CustBalancePoint,
+            TotalAmtBefDis = h.TotalAmtBefDis,
+            DiscPrcnt = h.DiscPrcnt,
+            DiscSum = h.DiscSum,
+            DownPaymentNo = h.DownPaymentNo,
+            DownPaymentAmt = h.DownPaymentAmt,
+            VatSum = h.VatSum,
+            DocTotal = h.DocTotal,
+            DocumentLines = bill.Lines
+        };
+
+        return JsonSerializer.Serialize(new[] { doc }, JsonOpts);
+    }
+
+    private static DTOs.Sap.SapArInvoiceRequestDto? DeserializeSapRequest(string json)
+    {
+        try
+        {
+            // Try old format first
+            var old = JsonSerializer.Deserialize<DTOs.Sap.SapArInvoiceRequestDto>(json, JsonOpts);
+            if (old is not null && old.Head is not null)
+                return old;
+        }
+        catch { }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            JsonElement el;
+            if (root.ValueKind == JsonValueKind.Array && root.GetArrayLength() > 0)
+                el = root[0];
+            else if (root.ValueKind == JsonValueKind.Object)
+                el = root;
+            else
+                return null;
+
+            DTOs.Sap.SapArInvoiceRequestDto dto = new();
+            var head = new DTOs.Sap.SapArInvoiceHeadDto();
+
+            string? GetString(string name)
+            {
+                if (el.TryGetProperty(name, out var p) && p.ValueKind != JsonValueKind.Null)
+                    return p.GetRawText().Trim('"');
+                return string.Empty;
+            }
+
+            decimal? GetDecimal(string name)
+            {
+                if (!el.TryGetProperty(name, out var p) || p.ValueKind == JsonValueKind.Null)
+                    return null;
+                try
+                {
+                    if (p.ValueKind == JsonValueKind.Number) return p.GetDecimal();
+                    var s = p.GetRawText().Trim('"');
+                    if (decimal.TryParse(s, out var v)) return v;
+                }
+                catch { }
+                return null;
+            }
+
+            head.DocNum = GetString("DocNum") ?? string.Empty;
+            head.DocDate = GetString("DocDate") ?? string.Empty;
+            head.PymntGroup = GetString("PymntGroup") ?? "Cash";
+            head.DocDueDate = GetString("DocDueDate") ?? head.DocDate;
+            head.POSID = GetString("POSID") ?? string.Empty;
+            head.CardCode = GetString("CardCode") ?? string.Empty;
+            head.CardName = GetString("CardName") ?? string.Empty;
+            head.CustTaxId = GetString("CustTaxId");
+            head.Address = GetString("Address");
+            head.CustVatBranch = GetString("CustVatBranch");
+            head.CustTel = GetString("CustTel");
+            head.CustMemberNo = GetString("CustMemberNo");
+            head.DocCur = GetString("DocCur") ?? "THB";
+            head.BranchCode = GetString("BranchCode") ?? string.Empty;
+            head.BranchName = GetString("BranchName") ?? string.Empty;
+            head.VatBranch = GetString("VatBranch") ?? string.Empty;
+            head.Comments = GetString("Comments");
+            head.Channel = GetString("Channel") ?? string.Empty;
+            head.CustBillPoint = GetDecimal("CustBillPoint");
+            head.CustRedeemPoint = GetDecimal("CustRedeemPoint");
+            head.CustBalancePoint = GetDecimal("CustBalancePoint");
+            head.TotalAmtBefDis = GetDecimal("TotalAmtBefDis") ?? 0m;
+            head.DiscPrcnt = GetDecimal("DiscPrcnt") ?? 0m;
+            head.DiscSum = GetDecimal("DiscSum") ?? 0m;
+            head.DownPaymentNo = GetString("DownPaymentNo");
+            head.DownPaymentAmt = GetDecimal("DownPaymentAmt");
+            head.VatSum = GetDecimal("VatSum") ?? 0m;
+            head.DocTotal = GetDecimal("DocTotal") ?? 0m;
+
+            dto.Head = head;
+
+            // Lines: try DocumentLines, then Lines
+            if (el.TryGetProperty("DocumentLines", out var linesEl) || el.TryGetProperty("Lines", out linesEl))
+            {
+                try
+                {
+                    dto.Lines = JsonSerializer.Deserialize<List<DTOs.Sap.SapArInvoiceLineDto>>(linesEl.GetRawText(), JsonOpts) ?? new List<DTOs.Sap.SapArInvoiceLineDto>();
+                }
+                catch
+                {
+                    dto.Lines = new List<DTOs.Sap.SapArInvoiceLineDto>();
+                }
+            }
+
+            return dto;
+        }
+        catch
+        {
+            return null;
+        }
     }
 }

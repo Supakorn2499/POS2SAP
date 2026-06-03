@@ -32,7 +32,7 @@ public class SapArInvoiceService : ISapArInvoiceService
     public async Task<(bool Success, string? SapDocNum, string? ErrorMessage, string? RawResponse)> PostArInvoiceAsync(
         SapArInvoiceRequestDto dto)
     {
-        var config = await _monitor.GetConfigDictAsync();
+        var config = await _monitor.GetConfigDictAsync("ARInvoice");
         var baseUrl = GetSapBaseUrl(config);
         var endpoint = $"{baseUrl.TrimEnd('/')}/arinvoice";
 

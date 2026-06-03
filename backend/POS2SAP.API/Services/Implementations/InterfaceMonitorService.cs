@@ -59,8 +59,18 @@ public class InterfaceMonitorService : IInterfaceMonitorService
         }
         if (!string.IsNullOrWhiteSpace(p.InterfaceType))
         {
+            // Accept UI-friendly names (ARInvoice, IncomingPayment, Delivery) and map to DB codes (AR, AP, DL)
+            var iface = p.InterfaceType.Trim().ToUpper();
+            string dbType = iface switch
+            {
+                "ARINVOICE" => "AR",
+                "INCOMINGPAYMENT" => "AP",
+                "DELIVERY" => "DL",
+                _ => iface
+            };
+
             where.Add("interface_type = @InterfaceType");
-            param.Add("InterfaceType", p.InterfaceType.Trim().ToUpper());
+            param.Add("InterfaceType", dbType);
         }
         if (!string.IsNullOrWhiteSpace(p.DateFrom))
         {
@@ -415,10 +425,51 @@ public class InterfaceMonitorService : IInterfaceMonitorService
         return rows > 0;
     }
 
-    public async Task<Dictionary<string, string>> GetConfigDictAsync()
+    public async Task<bool> UpsertConfigAsync(string key, string value, string? description = null, bool isActive = true)
+    {
+        var updateSql = "UPDATE interface_configs SET config_value = @Value, description = COALESCE(@Description, description), is_active = @IsActive, updated_at = @UpdatedAt WHERE config_key = @Key";
+        var rows = await _db.ExecuteAsync(updateSql, new { Key = key, Value = value, Description = description ?? string.Empty, IsActive = isActive ? 1 : 0, UpdatedAt = DateTime.UtcNow });
+        if (rows > 0) return true;
+
+        var insertSql = @"INSERT INTO interface_configs (id, config_key, config_value, description, is_active, updated_at)
+                          VALUES (LEFT(LOWER(REPLACE(NEWID(),'-','')), 26), @Key, @Value, @Description, @IsActive, @UpdatedAt)";
+        var inserted = await _db.ExecuteAsync(insertSql, new { Key = key, Value = value, Description = description ?? string.Empty, IsActive = isActive ? 1 : 0, UpdatedAt = DateTime.UtcNow });
+        return inserted > 0;
+    }
+
+    public async Task<Dictionary<string, string>> GetConfigDictAsync(string? interfaceType = null)
     {
         var sql = "SELECT config_key, config_value FROM interface_configs WHERE is_active = 1";
         var rows = await _db.QueryAsync<(string config_key, string config_value)>(sql);
-        return rows.ToDictionary(r => r.config_key, r => r.config_value ?? string.Empty);
+        var all = rows.ToDictionary(r => r.config_key, r => r.config_value ?? string.Empty, StringComparer.OrdinalIgnoreCase);
+
+        if (string.IsNullOrWhiteSpace(interfaceType))
+        {
+            return all;
+        }
+
+        // Build resolved dictionary: prefer interface-specific keys (e.g. ARInvoice.sap_url_test)
+        var resolved = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        // First add global keys (no dot) and keys that don't follow interface.key pattern
+        foreach (var kv in all)
+        {
+            if (!kv.Key.Contains('.'))
+                resolved[kv.Key] = kv.Value;
+        }
+
+        // Now apply interface-specific overrides
+        var prefix = interfaceType + ".";
+        foreach (var kv in all)
+        {
+            if (kv.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                var suffix = kv.Key.Substring(prefix.Length);
+                // override global or add new
+                resolved[suffix] = kv.Value;
+            }
+        }
+
+        return resolved;
     }
 }

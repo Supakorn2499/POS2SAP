@@ -1,6 +1,6 @@
 // src/pages/MonitorPage.tsx
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { Search, X, Play, RefreshCw, Zap } from 'lucide-react';
 import { toast } from 'sonner';
@@ -22,6 +22,7 @@ export default function MonitorPage() {
   // Pending (filter bar state)
   const [pendingSearch, setPendingSearch] = useState('');
   const [pendingStatus, setPendingStatus] = useState('');
+  const [pendingInterface, setPendingInterface] = useState('ARInvoice');
   const [pendingBranch, setPendingBranch] = useState('');
   const [pendingDateFrom, setPendingDateFrom] = useState('');
   const [pendingDateTo, setPendingDateTo] = useState('');
@@ -35,7 +36,7 @@ export default function MonitorPage() {
 
   // Committed query params
   const [params, setParams] = useState<InterfaceLogQueryParams>({
-    page: 1, pageSize: 20, sortBy: 'created_at', sortDirection: 'desc'
+    page: 1, pageSize: 20, sortBy: 'created_at', sortDirection: 'desc', interfaceType: 'ARInvoice'
   });
 
   const [triggering, setTriggering] = useState(false);
@@ -47,13 +48,17 @@ export default function MonitorPage() {
     staleTime: 30_000,
   });
 
+  const queryClient = useQueryClient();
+
   const rows = data?.items ?? [];
   const total = data?.totalCount ?? 0;
   const totalPages = data?.totalPages ?? 1;
 
   function handleSearch() {
-    setParams({
+    console.debug('MonitorPage.handleSearch', { pendingSearch, pendingInterface, pendingStatus, pendingBranch, pendingDateFrom, pendingDateTo });
+    const newParams = {
       search: pendingSearch || undefined,
+      interfaceType: pendingInterface || undefined,
       status: pendingStatus || undefined,
       branchCode: pendingBranch || undefined,
       dateFrom: pendingDateFrom || undefined,
@@ -62,19 +67,27 @@ export default function MonitorPage() {
       pageSize: 20,
       sortBy: 'created_at',
       sortDirection: 'desc',
+    } as InterfaceLogQueryParams;
+
+    setParams(newParams);
+
+    // Ensure we fetch using the exact params selected (avoid any stale query key timing)
+    void queryClient.fetchQuery(['monitor-logs', newParams], () => monitorService.getLogs(newParams)).catch((err) => {
+      // swallow - UI will show errors elsewhere
+      console.error('fetchQuery failed', err);
     });
   }
 
   function handleClear() {
-    setPendingSearch(''); setPendingStatus(''); setPendingBranch('');
+    setPendingSearch(''); setPendingStatus(''); setPendingBranch(''); setPendingInterface('ARInvoice');
     setPendingDateFrom(''); setPendingDateTo('');
-    setParams({ page: 1, pageSize: 20, sortBy: 'created_at', sortDirection: 'desc' });
+    setParams({ page: 1, pageSize: 20, sortBy: 'created_at', sortDirection: 'desc', interfaceType: 'ARInvoice' });
   }
 
   async function handleTrigger() {
     setTriggering(true);
     try {
-      const result = await interfaceService.triggerManual();
+      const result = await interfaceService.triggerManualFor(pendingInterface);
       toast.success(t('triggerSuccess'));
       refetch();
     } catch (err: unknown) {
@@ -141,6 +154,17 @@ export default function MonitorPage() {
       {/* Filter bar */}
       <div className="rounded-xl border bg-card p-4 shadow-sm">
         <div className="flex flex-wrap gap-3">
+            <div className="shrink-0">
+              <select
+                value={pendingInterface}
+                onChange={(e) => setPendingInterface(e.target.value)}
+                className="rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                <option value="ARInvoice">ARInvoice</option>
+                <option value="IncomingPayment">IncomingPayment</option>
+                <option value="Delivery">Delivery</option>
+              </select>
+            </div>
           <div className="relative flex-1 min-w-48">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <input

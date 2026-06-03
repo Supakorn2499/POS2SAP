@@ -6,14 +6,23 @@ const interfaceService = {
     const res = await apiClient.post('/interface/trigger', { docNos });
     return res.data.data;
   },
-
+  
   async retryRecord(id: string): Promise<boolean> {
     const res = await apiClient.post(`/interface/retry/${id}`);
     return res.data.data;
   },
 
-  async importPreview(docNos?: string[]): Promise<{ fetched: number; imported: number; error?: string }> {
-    const res = await apiClient.post('/interface/import', { docNos }, { timeout: 180000 });
+  async importPreview(docNos?: string[], interfaceType?: string): Promise<{ fetched: number; imported: number; error?: string }> {
+    const payload: any = { docNos };
+    if (interfaceType) payload.interfaceType = interfaceType;
+    const res = await apiClient.post('/interface/import', payload, { timeout: 180000 });
+    return res.data.data;
+  },
+
+  async triggerManualFor(interfaceType?: string, docNos?: string[]): Promise<{ sent: number; failed: number; total: number }> {
+    const payload: any = { docNos };
+    if (interfaceType) payload.interfaceType = interfaceType;
+    const res = await apiClient.post('/interface/trigger', payload);
     return res.data.data;
   },
 };

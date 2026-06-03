@@ -26,5 +26,6 @@ public interface IInterfaceMonitorService
     Task<List<InterfaceConfigDto>> GetConfigsAsync();
     Task<InterfaceConfigDto?> GetConfigByKeyAsync(string key);
     Task<bool> UpdateConfigAsync(string key, string value);
-    Task<Dictionary<string, string>> GetConfigDictAsync();
+    Task<bool> UpsertConfigAsync(string key, string value, string? description = null, bool isActive = true);
+    Task<Dictionary<string, string>> GetConfigDictAsync(string? interfaceType = null);
 }

@@ -31,6 +31,11 @@ export default function ConfigPage() {
   });
 
   const [values, setValues] = useState<Record<string, string>>({});
+  const [interfaceType, setInterfaceType] = useState('ARInvoice');
+  const [showGlobal, setShowGlobal] = useState(false);
+  const [newKey, setNewKey] = useState('');
+  const [newValue, setNewValue] = useState('');
+  const [prefixWithInterface, setPrefixWithInterface] = useState(true);
 
   const getConfigLabel = (key: string) => {
     const label = t(`configLabel.${key}`);
@@ -65,6 +70,50 @@ export default function ConfigPage() {
     toast.success(t('saveSuccess'));
   }
 
+  async function handleAddConfig() {
+    if (!newKey || !newKey.trim()) {
+      toast.error(t('configKeyRequired') || 'Config key is required');
+      return;
+    }
+    const keyToUse = prefixWithInterface && !newKey.includes('.')
+      ? `${interfaceType}.${newKey}`
+      : newKey;
+    try {
+      await mutation.mutateAsync({ key: keyToUse, value: newValue ?? '' });
+      setNewKey('');
+      setNewValue('');
+      toast.success(t('addConfigSuccess') || 'Config added');
+    } catch (err) {
+      // mutation onError will show toast
+    }
+  }
+
+  async function copyGlobalToInterface() {
+    // copy keys like sap_* (global) to interface-prefixed keys
+    for (const cfg of configs) {
+      if (!cfg.configKey.includes('.') && cfg.configKey.startsWith('sap_')) {
+        const targetKey = `${interfaceType}.${cfg.configKey}`;
+        const current = values[targetKey] ?? '';
+        const val = cfg.configValue ?? '';
+        if (current !== val) {
+          await mutation.mutateAsync({ key: targetKey, value: val });
+          setValues((v) => ({ ...v, [targetKey]: val }));
+        }
+      }
+    }
+    toast.success(t('copySuccess') || 'Copied global configs to interface');
+  }
+
+  async function handleTestConnection() {
+    try {
+      const res = await configService.testConfig(interfaceType);
+      if (res.success) toast.success(res.message || t('testSuccess') || 'Connection successful');
+      else toast.error(res.message || t('testFailed') || 'Test failed');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t('testFailed') || 'Test failed');
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -72,27 +121,86 @@ export default function ConfigPage() {
           <h1 className="text-xl font-bold">{t('configTitle')}</h1>
           <p className="text-sm text-muted-foreground">{t('configSubtitle')}</p>
         </div>
-        <button
+        <div className="flex items-center gap-3">
+          <select value={interfaceType} onChange={(e) => setInterfaceType(e.target.value)} className="rounded-md border bg-background px-3 py-2 text-sm">
+            <option value="ARInvoice">ARInvoice</option>
+            <option value="IncomingPayment">IncomingPayment</option>
+            <option value="Delivery">Delivery</option>
+          </select>
+          <label className="flex items-center gap-2 text-sm text-muted-foreground">
+            <input type="checkbox" checked={showGlobal} onChange={(e) => setShowGlobal(e.target.checked)} />
+            {t('showGlobalConfigs')}
+          </label>
+          <button onClick={copyGlobalToInterface} className="rounded-md border px-3 py-2 text-sm hover:bg-muted">{t('copyGlobal') || 'Copy global → interface'}</button>
+          <button onClick={handleTestConnection} className="rounded-md border px-3 py-2 text-sm hover:bg-muted">{t('testConnection') || 'Test connection'}</button>
+          <button
           onClick={handleSaveAll}
           disabled={mutation.isPending}
           className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
         >
           <Save className="h-4 w-4" />
           {mutation.isPending ? t('saving') : t('saveAll')}
-        </button>
+          </button>
+        </div>
+      </div>
+
+      <div className="rounded-md border bg-card p-4">
+        <h2 className="text-sm font-medium mb-2">{t('addConfigTitle') ?? 'Add Config'}</h2>
+        <div className="flex gap-3">
+          <input
+            placeholder={t('configKeyPlaceholder') ?? 'key (e.g. sap_url_test)'}
+            value={newKey}
+            onChange={(e) => setNewKey(e.target.value)}
+            className="rounded-md border bg-background px-3 py-2 text-sm w-64"
+          />
+          <input
+            placeholder={t('configValuePlaceholder') ?? 'value'}
+            value={newValue}
+            onChange={(e) => setNewValue(e.target.value)}
+            className="rounded-md border bg-background px-3 py-2 text-sm flex-1"
+          />
+          <label className="flex items-center gap-2 text-sm text-muted-foreground">
+            <input type="checkbox" checked={prefixWithInterface} onChange={(e) => setPrefixWithInterface(e.target.checked)} />
+            {t('prefixWithInterface') ?? 'Prefix with interface'}
+          </label>
+          <button
+            onClick={handleAddConfig}
+            disabled={mutation.isPending}
+            className="shrink-0 rounded-md border px-3 py-2 text-xs hover:bg-muted disabled:opacity-50"
+          >
+            {t('add') ?? 'Add'}
+          </button>
+        </div>
       </div>
 
       {isLoading ? (
         <div className="text-sm text-muted-foreground">{t('loading')}</div>
       ) : (
         <div className="rounded-xl border bg-card shadow-sm divide-y">
-          {configs.map((config) => {
+          {configs
+            .filter((config) => {
+              const key = config.configKey.toLowerCase();
+              const iface = interfaceType.toLowerCase();
+              if (showGlobal && key.startsWith('sap_')) return true;
+              return key.includes(iface);
+            })
+            .map((config) => {
             const currentValue = values[config.configKey] ?? '';
+            const isPerInterface = config.configKey.toLowerCase().startsWith(interfaceType.toLowerCase() + '.');
+            const isGlobalSap = !config.configKey.includes('.') && config.configKey.startsWith('sap_');
 
             return (
             <div key={config.configKey} className="flex items-center gap-4 px-5 py-3">
               <div className="w-64 shrink-0">
-                <p className="text-sm font-medium">{getConfigLabel(config.configKey)}</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium">{getConfigLabel(config.configKey)}</p>
+                  {isPerInterface && (
+                    <span className="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded">per-interface</span>
+                  )}
+                  {isGlobalSap && (
+                    <span className="text-xs bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded">global</span>
+                  )}
+                </div>
                 <p className="text-xs text-muted-foreground font-mono mt-0.5">{config.configKey}</p>
               </div>
               <input

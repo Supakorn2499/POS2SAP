@@ -217,6 +217,7 @@ export default function DashboardPage() {
   const [triggering, setTriggering] = useState(false);
   const [importing, setImporting] = useState(false);
   const [monthOffset, setMonthOffset] = useState(0);
+  const [interfaceType, setInterfaceType] = useState('ARInvoice');
   const [branchFilter, setBranchFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'FAILED' | 'RETRY'>('ALL');
   const [page, setPage] = useState(1);
@@ -252,8 +253,9 @@ export default function DashboardPage() {
     isLoading: recentLogsLoading,
     refetch: refetchRecentLogs,
   } = useQuery<PagedResult<InterfaceLogDto>>({
-    queryKey: ['recentLogs', monthOffset, branchFilter, statusFilter, page],
+    queryKey: ['recentLogs', interfaceType, monthOffset, branchFilter, statusFilter, page],
     queryFn: () => monitorService.getLogs({
+      interfaceType,
       status: statusFilter === 'ALL' ? 'FAILED,RETRY' : statusFilter,
       branchCode: branchFilter.trim() || undefined,
       dateFrom: monthRange.dateFrom,
@@ -273,7 +275,7 @@ export default function DashboardPage() {
   async function handleTrigger() {
     setTriggering(true);
     try {
-      const result = await interfaceService.triggerManual();
+      const result = await interfaceService.triggerManualFor(interfaceType);
       toast.success(t('triggerSuccess', { sent: result.sent }));
       refetch();
     } catch (err: unknown) {
@@ -286,7 +288,7 @@ export default function DashboardPage() {
   async function handleImport() {
     setImporting(true);
     try {
-      const result = await interfaceService.importPreview();
+      const result = await interfaceService.importPreview(undefined, interfaceType);
       if (result.error && result.fetched === 0) {
         toast.error(`${t('importError')}: ${result.error}`);
       } else if (result.fetched === 0) {
@@ -312,6 +314,13 @@ export default function DashboardPage() {
           <p className="text-sm text-muted-foreground">{t('dashboardSubtitle', { month: monthLabel })}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+            <div>
+              <select value={interfaceType} onChange={(e) => setInterfaceType(e.target.value)} className="rounded-md border bg-background px-3 py-2 text-sm">
+                <option value="ARInvoice">ARInvoice</option>
+                <option value="IncomingPayment">IncomingPayment</option>
+                <option value="Delivery">Delivery</option>
+              </select>
+            </div>
           <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={() => { setMonthOffset(0); setPage(1); }}

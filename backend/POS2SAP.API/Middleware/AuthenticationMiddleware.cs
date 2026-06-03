@@ -61,13 +61,16 @@ public class AuthorizationMiddleware
     private readonly ILogger<AuthorizationMiddleware> _logger;
 
     // Routes that don't require authentication
-    private static readonly string[] PublicRoutes = new[]
-    {
-        "/api/auth/login",
-        "/api/auth/refresh",
-        "/swagger",
-        "/health"
-    };
+        private static readonly string[] PublicRoutes = new[]
+        {
+            "/api/auth/login",
+            "/api/auth/refresh",
+            "/api/interface/upload",
+            "/api/config",
+            "/api/debug",
+            "/swagger",
+            "/health"
+        };
 
     public AuthorizationMiddleware(RequestDelegate next, ILogger<AuthorizationMiddleware> logger)
     {
