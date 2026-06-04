@@ -51,7 +51,7 @@ public class InterfaceController : ControllerBase
     public async Task<ActionResult<ApiResponse<ImportResultDto>>> Import([FromBody] TriggerRequestDto? request)
     {
         _logger.LogInformation("Import preview requested, docNos={Count}", request?.DocNos?.Count ?? 0);
-        var (fetched, imported, error) = await _job.ImportPreviewAsync(request?.DocNos);
+        var (fetched, imported, error) = await _job.ImportPreviewAsync(request?.DocNos, request?.InterfaceType);
         var result = new ImportResultDto { Fetched = fetched, Imported = imported, Error = error };
         var msg = fetched == 0
             ? "ไม่พบข้อมูลใหม่จาก POS (อาจถูก import ไปแล้วทั้งหมด)"
@@ -255,6 +255,7 @@ public class InterfaceController : ControllerBase
 public class TriggerRequestDto
 {
     public List<string>? DocNos { get; set; }
+    public string? InterfaceType { get; set; }
 }
 
 public class TriggerResultDto

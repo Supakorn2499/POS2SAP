@@ -18,7 +18,7 @@ public interface IInterfaceMonitorService
     Task<int> DeleteLogsByStatusAsync(IEnumerable<string>? docNos = null, IEnumerable<string>? statuses = null);
 
     // --- Dashboard ---
-    Task<DashboardSummaryDto> GetDashboardAsync(int monthOffset = 0);
+    Task<DashboardSummaryDto> GetDashboardAsync(int monthOffset = 0, string? interfaceType = null);
     Task<int> SimulateLogStatusesAsync();
     Task<List<BranchOptionDto>> GetBranchesAsync();
 

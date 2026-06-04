@@ -51,9 +51,9 @@ public class MonitorController : ControllerBase
 
     /// <summary>Get dashboard summary — status counts, daily trend, top branches</summary>
     [HttpGet("dashboard")]
-    public async Task<ActionResult<ApiResponse<DashboardSummaryDto>>> GetDashboard([FromQuery] int monthOffset = 0)
+    public async Task<ActionResult<ApiResponse<DashboardSummaryDto>>> GetDashboard([FromQuery] int monthOffset = 0, [FromQuery] string? interfaceType = null)
     {
-        var summary = await _monitor.GetDashboardAsync(monthOffset);
+        var summary = await _monitor.GetDashboardAsync(monthOffset, interfaceType);
         return Ok(ApiResponse<DashboardSummaryDto>.Ok(summary));
     }
 

@@ -63,27 +63,16 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
         return await RunBatchAsync(scope, docNos?.ToList());
     }
 
-    public async Task<(int Fetched, int Imported, string? Error)> ImportPreviewAsync(IEnumerable<string>? docNos = null)
+    public async Task<(int Fetched, int Imported, string? Error)> ImportPreviewAsync(IEnumerable<string>? docNos = null, string? interfaceType = null)
     {
+        // TODO: interfaceType is not used yet. This method only supports AR invoices.
         using var scope = _scopeFactory.CreateScope();
         var monitor = scope.ServiceProvider.GetRequiredService<IInterfaceMonitorService>();
         var posData = scope.ServiceProvider.GetRequiredService<IPosDataService>();
 
         var docNoList = docNos?.ToList();
 
-        // 1. Clear existing PENDING/RETRY logs before re-import
-        try
-        {
-            var deleted = await monitor.DeleteLogsByStatusAsync(docNoList);
-            if (deleted > 0)
-                _logger.LogInformation("ImportPreview: cleared {Deleted} PENDING/RETRY logs before re-import", deleted);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "ImportPreview: could not clear existing logs, proceeding anyway");
-        }
-
-        // 2. Fetch fresh data from POS
+        // 1. Fetch fresh data from POS
         var config = await monitor.GetConfigDictAsync();
         var batchSize = int.TryParse(config.GetValueOrDefault(gbVar.CfgImportBatchSize, "500"), out var bs) && bs > 0 ? bs : 500;
 
@@ -100,19 +89,18 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
             return (0, 0, ex.Message);
         }
 
-        // 3. Skip bills already in SUCCESS/PROCESSING (never overwrite committed records)
-        var protectedDocNos = new HashSet<string>();
+        // 2. Skip bills that already exist in the log table (any status)
+        var existingDocs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         try
         {
-            var existSql = @"SELECT pos_doc_no FROM interface_logs
-                             WHERE status IN ('SUCCESS', 'PROCESSING', 'FAILED')";
+            var existSql = @"SELECT DISTINCT pos_doc_no + '|' + branch_code FROM interface_logs";
             using var dbConn = new Microsoft.Data.SqlClient.SqlConnection(Common.gbVar.MainConstr);
-            var existing = await dbConn.QueryAsync<string>(existSql);
-            protectedDocNos = new HashSet<string>(existing, StringComparer.OrdinalIgnoreCase);
+            var existingKeys = await dbConn.QueryAsync<string>(existSql);
+            existingDocs = new HashSet<string>(existingKeys, StringComparer.OrdinalIgnoreCase);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "ImportPreview: could not check protected logs, will import all");
+            _logger.LogWarning(ex, "ImportPreview: could not check existing logs, will import all and may create duplicates");
         }
 
         int imported = 0;
@@ -120,32 +108,35 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
         string? lastError = null;
         foreach (var bill in bills)
         {
-            if (protectedDocNos.Contains(bill.Head.DocNum))
+            var billKey = $"{bill.Head.DocNum}|{bill.Head.BranchCode}";
+            if (existingDocs.Contains(billKey))
             {
                 skipped++;
                 continue;
             }
 
-                try
-                {
-                    var posJson = SerializeAsDocumentArray(bill);
+            try
+            {
+                var posJson = SerializeAsDocumentArray(bill);
                 var log = new InterfaceLog
                 {
-                    PosDocNo   = bill.Head.DocNum,
-                    PosDocDate = DateTime.TryParseExact(bill.Head.DocDate, "yyyyMMdd", null,
-                                     System.Globalization.DateTimeStyles.None, out var d) ? d : null,
-                    BranchCode = bill.Head.BranchCode,
-                    BranchName = bill.Head.BranchName,
-                    PosId      = bill.Head.POSID,
-                    CardCode   = bill.Head.CardCode,
-                    Channel    = bill.Head.Channel,
-                    DocTotal   = bill.Head.DocTotal,
-                    PosData    = posJson,
-                    SapRequest = null,
-                    Status     = gbVar.StatusPending
+                    PosDocNo      = bill.Head.DocNum,
+                    PosDocDate    = DateTime.TryParseExact(bill.Head.DocDate, "yyyyMMdd", null,
+                                        System.Globalization.DateTimeStyles.None, out var d) ? d : null,
+                    BranchCode    = bill.Head.BranchCode,
+                    BranchName    = bill.Head.BranchName,
+                    PosId         = bill.Head.POSID,
+                    CardCode      = bill.Head.CardCode,
+                    Channel       = bill.Head.Channel,
+                    DocTotal      = bill.Head.DocTotal,
+                    PosData       = posJson,
+                    SapRequest    = null,
+                    Status        = gbVar.StatusPending,
+                    InterfaceType = "AR" // Default to AR for now
                 };
                 await monitor.InsertLogAsync(log);
                 imported++;
+                existingDocs.Add(billKey); // Add to set to prevent duplicates from the same batch
             }
             catch (Exception ex)
             {

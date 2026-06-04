@@ -27,7 +27,7 @@ public class InterfaceMonitorService : IInterfaceMonitorService
 
         if (!string.IsNullOrWhiteSpace(p.Search))
         {
-            where.Add("(pos_doc_no LIKE @Search OR branch_code LIKE @Search OR card_code LIKE @Search)");
+            where.Add("(pos_doc_no LIKE @Search OR card_code LIKE @Search)");
             param.Add("Search", $"%{p.Search.Trim()}%");
         }
         if (!string.IsNullOrWhiteSpace(p.Status))
@@ -238,39 +238,62 @@ public class InterfaceMonitorService : IInterfaceMonitorService
 
     // ------------------------------------------------------------------ Dashboard
 
-    public async Task<DashboardSummaryDto> GetDashboardAsync(int monthOffset = 0)
+    public async Task<DashboardSummaryDto> GetDashboardAsync(int monthOffset = 0, string? interfaceType = null)
     {
         monthOffset = Math.Clamp(monthOffset, 0, 1);
         var now = DateTime.Today;
         var monthStart = new DateTime(now.Year, now.Month, 1).AddMonths(-monthOffset);
         var monthEnd = monthStart.AddMonths(1);
 
-        var countSql = @"
-            SELECT
-                SUM(CASE WHEN status='PENDING'    THEN 1 ELSE 0 END) AS Pending,
-                SUM(CASE WHEN status='PROCESSING' THEN 1 ELSE 0 END) AS Processing,
-                SUM(CASE WHEN status='SUCCESS'    THEN 1 ELSE 0 END) AS Success,
-                SUM(CASE WHEN status='FAILED'     THEN 1 ELSE 0 END) AS Failed,
-                SUM(CASE WHEN status='RETRY'      THEN 1 ELSE 0 END) AS Retry,
-                COUNT(*) AS Total
-            FROM interface_logs
-            WHERE is_deleted = 0
-              AND created_at >= @DateFrom
-              AND created_at <  @DateTo";
+        var param = new DynamicParameters();
+        param.Add("DateFrom", monthStart);
+        param.Add("DateTo", monthEnd);
 
-        var trendSql = @"
-            SELECT CONVERT(VARCHAR(10), created_at, 120) AS Date,
-                   SUM(CASE WHEN status='SUCCESS' THEN 1 ELSE 0 END) AS Success,
-                   SUM(CASE WHEN status='FAILED'  THEN 1 ELSE 0 END) AS Failed,
+        var whereConditions = new List<string>
+        {
+            "l.is_deleted = 0",
+            "l.created_at >= @DateFrom",
+            "l.created_at < @DateTo"
+        };
+
+        if (!string.IsNullOrWhiteSpace(interfaceType))
+        {
+            var iface = interfaceType.Trim().ToUpper();
+            string dbType = iface switch
+            {
+                "ARINVOICE" => "AR",
+                "INCOMINGPAYMENT" => "AP",
+                "DELIVERY" => "DL",
+                _ => iface
+            };
+            whereConditions.Add("l.interface_type = @InterfaceType");
+            param.Add("InterfaceType", dbType);
+        }
+        
+        var whereClause = $"WHERE {string.Join(" AND ", whereConditions)}";
+
+        var countSql = $@"
+            SELECT
+                SUM(CASE WHEN l.status='PENDING'    THEN 1 ELSE 0 END) AS Pending,
+                SUM(CASE WHEN l.status='PROCESSING' THEN 1 ELSE 0 END) AS Processing,
+                SUM(CASE WHEN l.status='SUCCESS'    THEN 1 ELSE 0 END) AS Success,
+                SUM(CASE WHEN l.status='FAILED'     THEN 1 ELSE 0 END) AS Failed,
+                SUM(CASE WHEN l.status='RETRY'      THEN 1 ELSE 0 END) AS Retry,
+                COUNT(*) AS Total
+            FROM interface_logs l
+            {whereClause.Replace("l.is_deleted", "is_deleted").Replace("l.created_at", "created_at")}";
+
+        var trendSql = $@"
+            SELECT CONVERT(VARCHAR(10), l.created_at, 120) AS Date,
+                   SUM(CASE WHEN l.status='SUCCESS' THEN 1 ELSE 0 END) AS Success,
+                   SUM(CASE WHEN l.status='FAILED'  THEN 1 ELSE 0 END) AS Failed,
                    COUNT(*) AS Total
-            FROM interface_logs
-            WHERE is_deleted = 0
-              AND created_at >= @DateFrom
-              AND created_at <  @DateTo
-            GROUP BY CONVERT(VARCHAR(10), created_at, 120)
+            FROM interface_logs l
+            {whereClause.Replace("l.is_deleted", "is_deleted").Replace("l.created_at", "created_at")}
+            GROUP BY CONVERT(VARCHAR(10), l.created_at, 120)
             ORDER BY Date";
 
-        var branchSql = @"
+        var branchSql = $@"
             SELECT TOP 10
                 l.branch_code AS BranchCode,
                 COALESCE(MAX(CONVERT(NVARCHAR(100), sd.shopname)), MAX(l.branch_name)) AS BranchName,
@@ -279,14 +302,11 @@ public class InterfaceMonitorService : IInterfaceMonitorService
                 SUM(CASE WHEN l.status='FAILED'  THEN 1 ELSE 0 END) AS Failed
             FROM interface_logs l
             LEFT JOIN shop_data sd ON sd.shopcode = l.branch_code
-            WHERE l.is_deleted = 0
-              AND l.branch_code IS NOT NULL
-              AND l.created_at >= @DateFrom
-              AND l.created_at <  @DateTo
+            {whereClause} AND l.branch_code IS NOT NULL
             GROUP BY l.branch_code
             ORDER BY Total DESC";
 
-        var failedBranchSql = @"
+        var failedBranchSql = $@"
             SELECT TOP 10
                 l.branch_code AS BranchCode,
                 COALESCE(MAX(CONVERT(NVARCHAR(100), sd.shopname)), MAX(l.branch_name)) AS BranchName,
@@ -295,15 +315,11 @@ public class InterfaceMonitorService : IInterfaceMonitorService
                 SUM(CASE WHEN l.status='FAILED'  THEN 1 ELSE 0 END) AS Failed
             FROM interface_logs l
             LEFT JOIN shop_data sd ON sd.shopcode = l.branch_code
-            WHERE l.is_deleted = 0
-              AND l.status = 'FAILED'
-              AND l.branch_code IS NOT NULL
-              AND l.created_at >= @DateFrom
-              AND l.created_at <  @DateTo
+            {whereClause} AND l.status = 'FAILED' AND l.branch_code IS NOT NULL
             GROUP BY l.branch_code
             ORDER BY Failed DESC";
 
-        var recentSql = @"
+        var recentSql = $@"
             SELECT TOP 10
                 l.id            AS Id,
                 l.pos_doc_no    AS PosDocNo,
@@ -324,18 +340,14 @@ public class InterfaceMonitorService : IInterfaceMonitorService
             FROM interface_logs l
             LEFT JOIN shop_data sd ON sd.shopcode = l.branch_code
             LEFT JOIN salemode sm ON sm.SaleModeID = TRY_CAST(l.channel AS INT)
-            WHERE l.is_deleted = 0
-              AND l.created_at >= @DateFrom
-              AND l.created_at <  @DateTo
+            {whereClause}
             ORDER BY l.created_at DESC";
 
-        var parameters = new { DateFrom = monthStart, DateTo = monthEnd };
-
-        var counts = await _db.QueryFirstOrDefaultAsync<StatusCountDto>(countSql, parameters) ?? new();
-        var trend = (await _db.QueryAsync<DailyTrendDto>(trendSql, parameters)).ToList();
-        var branches = (await _db.QueryAsync<BranchStatDto>(branchSql, parameters)).ToList();
-        var failedBranches = (await _db.QueryAsync<BranchStatDto>(failedBranchSql, parameters)).ToList();
-        var recent = (await _db.QueryAsync<InterfaceLogDto>(recentSql, parameters)).ToList();
+        var counts = await _db.QueryFirstOrDefaultAsync<StatusCountDto>(countSql, param) ?? new();
+        var trend = (await _db.QueryAsync<DailyTrendDto>(trendSql, param)).ToList();
+        var branches = (await _db.QueryAsync<BranchStatDto>(branchSql, param)).ToList();
+        var failedBranches = (await _db.QueryAsync<BranchStatDto>(failedBranchSql, param)).ToList();
+        var recent = (await _db.QueryAsync<InterfaceLogDto>(recentSql, param)).ToList();
 
         return new DashboardSummaryDto
         {

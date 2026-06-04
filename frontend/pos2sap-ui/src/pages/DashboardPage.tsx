@@ -1,5 +1,5 @@
 // src/pages/DashboardPage.tsx
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Clock, CheckCircle, XCircle, RefreshCw, Activity, Play, Download, MoreHorizontal } from 'lucide-react';
@@ -230,11 +230,29 @@ export default function DashboardPage() {
   });
 
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ['dashboard', monthOffset],
-    queryFn: () => dashboardService.getDashboard(monthOffset),
+    queryKey: ['dashboard', monthOffset, interfaceType],
+    queryFn: () => dashboardService.getDashboard(monthOffset, interfaceType),
     staleTime: 60_000,
     retry: 1,
   });
+
+  useEffect(() => {
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      // Chrome requires returnValue to be set.
+      event.returnValue = '';
+    };
+
+    if (importing) {
+      window.addEventListener('beforeunload', handleBeforeUnload);
+    } else {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    }
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [importing]);
 
   const getDateRange = (offset: number) => {
     const now = new Date();
@@ -340,7 +358,11 @@ export default function DashboardPage() {
             disabled={importing}
             className="flex items-center gap-2 rounded-lg border border-green-500 px-4 py-2 text-sm font-medium text-green-700 hover:bg-green-50 disabled:opacity-50"
           >
-            <Download className="h-4 w-4" />
+            {importing ? (
+              <RefreshCw className="h-4 w-4 animate-spin" />
+            ) : (
+              <Download className="h-4 w-4" />
+            )}
             {importing ? t('importing') : t('importFromPOS')}
           </button>
           <button
