@@ -77,7 +77,7 @@ public class PosDataService : IPosDataService
             SELECT
                 b.TranKey,
                 ISNULL(c.ProductCode, CAST(b.ProductID AS NVARCHAR(50)))  AS ItemCode,
-                ISNULL(c.CategoryCode, '')                                 AS ItemCategory,
+                ''                                                         AS ItemCategory,
                 ISNULL(c.ProductName, '')                                  AS Dscription,
                 b.Comment                                                  AS FreeTxt,
                 b.TotalQty                                                 AS Quantity,
@@ -164,7 +164,7 @@ public class PosDataService : IPosDataService
             var lineSql = @"
                 SELECT
                     ISNULL(c.ProductCode, CAST(b.ProductID AS NVARCHAR(50)))  AS ItemCode,
-                    ISNULL(c.CategoryCode, '')                                 AS ItemCategory,
+                    ''                                                         AS ItemCategory,
                     ISNULL(c.ProductName, '')                                  AS Dscription,
                     b.Comment                                                  AS FreeTxt,
                     b.TotalQty                                                 AS Quantity,
