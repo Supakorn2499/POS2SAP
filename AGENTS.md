@@ -11,7 +11,7 @@ Related docs:
 ## Stack
 
 - **Backend**: .NET 8 ASP.NET Core, **Dapper** (not EF Core), Serilog, JWT, BCrypt, ULID, Swashbuckle. Entry: [backend/POS2SAP.API/Program.cs](backend/POS2SAP.API/Program.cs).
-- **Frontend**: React 19 + TypeScript (strict) + Vite, React Router v7, TanStack Query, Axios, Tailwind, Recharts, Sonner. Entry: [frontend/pos2sap-ui/src/main.tsx](frontend/pos2sap-ui/src/main.tsx).
+- **Frontend**: React 19 + TypeScript + Vite, React Router v7, TanStack Query, Axios, Tailwind, Recharts, Sonner. Entry: [frontend/pos2sap-ui/src/main.tsx](frontend/pos2sap-ui/src/main.tsx).
 - **DB**: SQL Server, database `HQ_FAMTIME` (shared with POS). Connection string in [backend/POS2SAP.API/appsettings.json](backend/POS2SAP.API/appsettings.json).
 
 ## Build & Run
@@ -45,6 +45,10 @@ Controllers  →  Services (Interfaces/Implementations)  →  Dapper + SQL
                     └─ IInterfaceMonitorService (dashboard, logs, config CRUD)
 ```
 
+Controllers: `AuthController` (public), `ConfigController`, `DebugController`, `InterfaceController`, `MonitorController`.
+
+Frontend pages: `LoginPage`, `DashboardPage`, `MonitorPage`, `MonitorDetailPage`, `ConfigPage`.
+
 Job flow: scheduler → fetch pending POS docs → map to `SapArInvoiceRequestDto` → POST SAP → write full audit to `interface_logs` (status `PENDING`/`PROCESSING`/`SUCCESS`/`FAILED`/`RETRY`).
 
 Auth: JWT bearer. Public routes: `/api/auth/login`, `/api/auth/refresh`, `/swagger/*`, `/health`. All other controllers use `[Authorize]` ([backend/POS2SAP.API/Attributes/AuthorizeAttribute.cs](backend/POS2SAP.API/Attributes/AuthorizeAttribute.cs)) checked by [backend/POS2SAP.API/Middleware/AuthenticationMiddleware.cs](backend/POS2SAP.API/Middleware/AuthenticationMiddleware.cs).
@@ -63,7 +67,7 @@ Auth: JWT bearer. Public routes: `/api/auth/login`, `/api/auth/refresh`, `/swagg
 - Server state uses TanStack Query; user feedback via `sonner` toasts.
 - DTO TS types in `src/types/` mirror backend DTO names (e.g. `LoginResultDto`).
 - UI strings are Thai; keep code identifiers and comments in English.
-- Strict TS — keep it compiling with `npm run build`.
+- TS uses some relaxed checks (`noUnusedLocals=false`, `noUnusedParameters=false`) plus `ignoreDeprecations: "6.0"`; keep it compiling with `npm run build`.
 
 ## Gotchas
 
@@ -74,6 +78,8 @@ Auth: JWT bearer. Public routes: `/api/auth/login`, `/api/auth/refresh`, `/swagg
 - **Background job toggle**: config row `schedule_enabled` — if `"false"`, only manual `/api/interface/trigger` works.
 - **Legacy SHA1 password path** still exists in [backend/POS2SAP.API/Controllers/AuthController.cs](backend/POS2SAP.API/Controllers/AuthController.cs) for transition; new passwords must be BCrypt (workFactor=11).
 - **Vite dev proxy** means calling `/api/...` works in dev without CORS; production build must be served same-origin or `AllowedOrigins` updated.
+- **Frontend auth storage keys** are `pos2sapAuth`, `pos2sapToken`, `pos2sapUser` in [frontend/pos2sap-ui/src/contexts/AuthContext.tsx](frontend/pos2sap-ui/src/contexts/AuthContext.tsx); keep key names consistent or auth state breaks.
+- **TypeScript config is intentionally mixed-strictness** in [frontend/pos2sap-ui/tsconfig.app.json](frontend/pos2sap-ui/tsconfig.app.json) (includes `ignoreDeprecations: "6.0"` and relaxed unused checks); do not assume full strict-mode diagnostics.
 - Logs folder must be writable; missing `Logs/` directory causes Serilog startup errors on some hosts.
 
 ## Pattern-exemplar files

@@ -255,7 +255,7 @@ public class PosDataService : IPosDataService
             LineTotal    = Dec(l.LineTotal),
             GTotal       = Dec(l.GTotal),
             WhsCode      = Str(l.WhsCode),
-            CouponNo     = new()
+            CouponNo     = string.Empty
         };
     }
 }
