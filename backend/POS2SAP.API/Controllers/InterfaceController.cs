@@ -4,7 +4,8 @@ using POS2SAP.API.Common;
 using POS2SAP.API.Services.Interfaces;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using POS2SAP.API.DTOs.Sap;
+using POS2SAP.API.DTOs.Sap; // DTO for SAP data structures
+using POS2SAP.API.DTOs.Monitor; // เพิ่ม using statement นี้
 using POS2SAP.API.Models;
 
 namespace POS2SAP.API.Controllers;
@@ -59,7 +60,24 @@ public class InterfaceController : ControllerBase
         return Ok(ApiResponse<ImportResultDto>.Ok(result, msg));
     }
 
-    /// <summary>Test upload: accept raw POS JSON (old or new format) and insert as PENDING log</summary>
+    /// <summary>Resend multiple records based on their SapArInvoiceHeadDto data</summary>
+    [HttpPost("resend")]
+    public async Task<ActionResult<ApiResponse<TriggerResultDto>>> Resend([FromBody] ResendRequestDto request)
+    {
+        _logger.LogInformation("Batch resend requested, items={Count}", request?.Request?.Count ?? 0);
+        if (request?.Request == null || !request.Request.Any())
+        {
+            return BadRequest(ApiResponse<TriggerResultDto>.Fail("No items provided for resend."));
+        }
+
+        // This assumes we can use the DocNum from the request to trigger the resend job.
+        // If the resend logic is more complex, the IInterfaceJobService might need adjustments.
+        var docNosToResend = request.Request.Select(x => x.DocNum).ToList();
+        var (sent, failed) = await _job.TriggerManualAsync(docNosToResend);
+        var result = new TriggerResultDto { Sent = sent, Failed = failed, Total = sent + failed };
+        return Ok(ApiResponse<TriggerResultDto>.Ok(result, $"ส่งสำเร็จ {sent} รายการ, ล้มเหลว {failed} รายการ"));
+    }
+
     [HttpPost("upload")]
     [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<object>>> UploadRaw([FromBody] JsonElement body)
@@ -67,73 +85,20 @@ public class InterfaceController : ControllerBase
         try
         {
             var json = body.GetRawText();
-            var dto = DeserializeSapRequest(json);
-            if (dto is null) return BadRequest(ApiResponse<string>.Fail("ไม่สามารถแปลง POS JSON ได้"));
+            var bill = DeserializeRequest(json);
+            if (bill is null) return BadRequest(ApiResponse<string>.Fail("ไม่สามารถแปลง POS JSON ได้"));
 
-            // Build canonical JSON from original request to preserve only provided fields
-            using var parsed = JsonDocument.Parse(json);
-            var root = parsed.RootElement;
-            var arr = new JsonArray();
-            var obj = new JsonObject();
-
-            if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("Head", out var headEl))
-            {
-                foreach (var p in headEl.EnumerateObject())
-                {
-                    obj[p.Name] = JsonNode.Parse(p.Value.GetRawText());
-                }
-
-                if (root.TryGetProperty("DocumentLines", out var dlines))
-                {
-                    obj["DocumentLines"] = JsonNode.Parse(dlines.GetRawText());
-                }
-                else if (root.TryGetProperty("Lines", out var lines))
-                {
-                    obj["DocumentLines"] = JsonNode.Parse(lines.GetRawText());
-                }
-            }
-            else if (root.ValueKind == JsonValueKind.Array && root.GetArrayLength() > 0)
-            {
-                var el = root[0];
-                foreach (var p in el.EnumerateObject())
-                {
-                    if (p.NameEquals("Lines") )
-                    {
-                        obj["DocumentLines"] = JsonNode.Parse(p.Value.GetRawText());
-                    }
-                    else
-                    {
-                        obj[p.Name] = JsonNode.Parse(p.Value.GetRawText());
-                    }
-                }
-
-                if (!obj.ContainsKey("DocumentLines") && el.TryGetProperty("DocumentLines", out var dl))
-                {
-                    obj["DocumentLines"] = JsonNode.Parse(dl.GetRawText());
-                }
-            }
-            else if (root.ValueKind == JsonValueKind.Object)
-            {
-                // Fallback: copy all top-level properties
-                foreach (var p in root.EnumerateObject())
-                {
-                    if (p.NameEquals("Lines")) obj["DocumentLines"] = JsonNode.Parse(p.Value.GetRawText());
-                    else obj[p.Name] = JsonNode.Parse(p.Value.GetRawText());
-                }
-            }
-
-            arr.Add(obj);
-            var posJson = arr.ToJsonString(new JsonSerializerOptions { WriteIndented = false });
+            var posJson = JsonSerializer.Serialize(new[] { bill });
             var log = new InterfaceLog
             {
-                PosDocNo = dto.Head.DocNum,
-                PosDocDate = DateTime.TryParseExact(dto.Head.DocDate, "yyyyMMdd", null, System.Globalization.DateTimeStyles.None, out var d) ? d : null,
-                BranchCode = dto.Head.BranchCode,
-                BranchName = dto.Head.BranchName,
-                PosId = dto.Head.POSID,
-                CardCode = dto.Head.CardCode,
-                Channel = dto.Head.Channel,
-                DocTotal = dto.Head.DocTotal,
+                PosDocNo = bill.DocNum,
+                PosDocDate = DateTime.TryParse(bill.DocDate, out var d) ? d : null,
+                BranchCode = bill.BranchCode,
+                BranchName = bill.BranchName,
+                PosId = bill.POSID,
+                CardCode = bill.CardCode,
+                Channel = bill.Channel,
+                DocTotal = bill.DocTotal,
                 PosData = posJson,
                 SapRequest = null,
                 Status = gbVar.StatusPending
@@ -149,106 +114,31 @@ public class InterfaceController : ControllerBase
             return BadRequest(ApiResponse<string>.Fail(ex.Message));
         }
     }
-
-    // Duplicate of deserialize helper to support both old and new POS JSON shapes for test endpoint
-    private static SapArInvoiceRequestDto? DeserializeSapRequest(string json)
+    
+    private static SapArInvoiceHeadDto? DeserializeRequest(string json)
     {
+        var opts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
         try
         {
-            var old = JsonSerializer.Deserialize<SapArInvoiceRequestDto>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-            if (old is not null && old.Head is not null)
-                return old;
+            var invoices = JsonSerializer.Deserialize<List<SapArInvoiceHeadDto>>(json, opts);
+            if (invoices is not null && invoices.Any())
+            {
+                return invoices[0];
+            }
         }
         catch { }
 
         try
         {
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-
-            JsonElement el;
-            if (root.ValueKind == JsonValueKind.Array && root.GetArrayLength() > 0)
-                el = root[0];
-            else if (root.ValueKind == JsonValueKind.Object)
-                el = root;
-            else
-                return null;
-
-            var dto = new SapArInvoiceRequestDto();
-            var head = new SapArInvoiceHeadDto();
-
-            string GetString(string name)
+            var invoice = JsonSerializer.Deserialize<SapArInvoiceHeadDto>(json, opts);
+            if (invoice is not null && !string.IsNullOrEmpty(invoice.DocNum))
             {
-                if (el.TryGetProperty(name, out var p) && p.ValueKind != JsonValueKind.Null)
-                {
-                    return p.ValueKind == JsonValueKind.String ? p.GetString() ?? string.Empty : p.GetRawText().Trim('"');
-                }
-                return string.Empty;
+                return invoice;
             }
-
-            decimal? GetDecimal(string name)
-            {
-                if (!el.TryGetProperty(name, out var p) || p.ValueKind == JsonValueKind.Null)
-                    return null;
-                try
-                {
-                    if (p.ValueKind == JsonValueKind.Number) return p.GetDecimal();
-                    var s = p.GetRawText().Trim('"');
-                    if (decimal.TryParse(s, out var v)) return v;
-                }
-                catch { }
-                return null;
-            }
-
-            head.DocNum = GetString("DocNum");
-            head.DocDate = GetString("DocDate");
-            head.PymntGroup = GetString("PymntGroup");
-            head.DocDueDate = GetString("DocDueDate");
-            head.POSID = GetString("POSID");
-            head.CardCode = GetString("CardCode");
-            head.CardName = GetString("CardName");
-            head.CustTaxId = GetString("CustTaxId");
-            head.Address = GetString("Address");
-            head.CustVatBranch = GetString("CustVatBranch");
-            head.CustTel = GetString("CustTel");
-            head.CustMemberNo = GetString("CustMemberNo");
-            head.DocCur = GetString("DocCur");
-            head.BranchCode = GetString("BranchCode");
-            head.BranchName = GetString("BranchName");
-            head.VatBranch = GetString("VatBranch");
-            head.Comments = GetString("Comments");
-            head.Channel = GetString("Channel");
-            head.CustBillPoint = GetDecimal("CustBillPoint");
-            head.CustRedeemPoint = GetDecimal("CustRedeemPoint");
-            head.CustBalancePoint = GetDecimal("CustBalancePoint");
-            head.TotalAmtBefDis = GetDecimal("TotalAmtBefDis") ?? 0m;
-            head.DiscPrcnt = GetDecimal("DiscPrcnt") ?? 0m;
-            head.DiscSum = GetDecimal("DiscSum") ?? 0m;
-            head.DownPaymentNo = GetString("DownPaymentNo");
-            head.DownPaymentAmt = GetDecimal("DownPaymentAmt");
-            head.VatSum = GetDecimal("VatSum") ?? 0m;
-            head.DocTotal = GetDecimal("DocTotal") ?? 0m;
-
-            dto.Head = head;
-
-            if (el.TryGetProperty("DocumentLines", out var linesEl) || el.TryGetProperty("Lines", out linesEl))
-            {
-                try
-                {
-                    dto.Lines = JsonSerializer.Deserialize<List<SapArInvoiceLineDto>>(linesEl.GetRawText(), new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new List<SapArInvoiceLineDto>();
-                }
-                catch
-                {
-                    dto.Lines = new List<SapArInvoiceLineDto>();
-                }
-            }
-
-            return dto;
         }
-        catch
-        {
-            return null;
-        }
+        catch { }
+
+        return null;
     }
 }
 

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Dapper;
 using POS2SAP.API.Common;
+using POS2SAP.API.DTOs.Sap;
 using POS2SAP.API.Models;
 using POS2SAP.API.Services.Interfaces;
 
@@ -65,18 +66,15 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
 
     public async Task<(int Fetched, int Imported, string? Error)> ImportPreviewAsync(IEnumerable<string>? docNos = null, string? interfaceType = null)
     {
-        // TODO: interfaceType is not used yet. This method only supports AR invoices.
         using var scope = _scopeFactory.CreateScope();
         var monitor = scope.ServiceProvider.GetRequiredService<IInterfaceMonitorService>();
         var posData = scope.ServiceProvider.GetRequiredService<IPosDataService>();
 
         var docNoList = docNos?.ToList();
-
-        // 1. Fetch fresh data from POS
         var config = await monitor.GetConfigDictAsync();
         var batchSize = int.TryParse(config.GetValueOrDefault(gbVar.CfgImportBatchSize, "500"), out var bs) && bs > 0 ? bs : 500;
 
-        List<DTOs.Sap.SapArInvoiceRequestDto> bills;
+        List<SapArInvoiceHeadDto> bills;
         try
         {
             bills = docNoList?.Count > 0
@@ -89,12 +87,11 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
             return (0, 0, ex.Message);
         }
 
-        // 2. Skip bills that already exist in the log table (any status)
         var existingDocs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         try
         {
             var existSql = @"SELECT DISTINCT pos_doc_no + '|' + branch_code FROM interface_logs";
-            using var dbConn = new Microsoft.Data.SqlClient.SqlConnection(Common.gbVar.MainConstr);
+            using var dbConn = new Microsoft.Data.SqlClient.SqlConnection(gbVar.MainConstr);
             var existingKeys = await dbConn.QueryAsync<string>(existSql);
             existingDocs = new HashSet<string>(existingKeys, StringComparer.OrdinalIgnoreCase);
         }
@@ -103,12 +100,11 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
             _logger.LogWarning(ex, "ImportPreview: could not check existing logs, will import all and may create duplicates");
         }
 
-        int imported = 0;
-        int skipped = 0;
+        int imported = 0, skipped = 0;
         string? lastError = null;
         foreach (var bill in bills)
         {
-            var billKey = $"{bill.Head.DocNum}|{bill.Head.BranchCode}";
+            var billKey = $"{bill.DocNum}|{bill.BranchCode}";
             if (existingDocs.Contains(billKey))
             {
                 skipped++;
@@ -117,31 +113,30 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
 
             try
             {
-                var posJson = SerializeAsDocumentArray(bill);
+                var posJson = JsonSerializer.Serialize(new[] { bill }, JsonOpts);
                 var log = new InterfaceLog
                 {
-                    PosDocNo      = bill.Head.DocNum,
-                    PosDocDate    = DateTime.TryParseExact(bill.Head.DocDate, "yyyyMMdd", null,
-                                        System.Globalization.DateTimeStyles.None, out var d) ? d : null,
-                    BranchCode    = bill.Head.BranchCode,
-                    BranchName    = bill.Head.BranchName,
-                    PosId         = bill.Head.POSID,
-                    CardCode      = bill.Head.CardCode,
-                    Channel       = bill.Head.Channel,
-                    DocTotal      = bill.Head.DocTotal,
+                    PosDocNo      = bill.DocNum,
+                    PosDocDate    = DateTime.TryParse(bill.DocDate, out var d) ? d : null,
+                    BranchCode    = bill.BranchCode,
+                    BranchName    = bill.BranchName,
+                    PosId         = bill.POSID,
+                    CardCode      = bill.CardCode,
+                    Channel       = bill.Channel,
+                    DocTotal      = bill.DocTotal,
                     PosData       = posJson,
                     SapRequest    = null,
                     Status        = gbVar.StatusPending,
-                    InterfaceType = "AR" // Default to AR for now
+                    InterfaceType = "AR"
                 };
                 await monitor.InsertLogAsync(log);
                 imported++;
-                existingDocs.Add(billKey); // Add to set to prevent duplicates from the same batch
+                existingDocs.Add(billKey);
             }
             catch (Exception ex)
             {
                 lastError = ex.Message;
-                _logger.LogWarning(ex, "ImportPreview: skip bill {DocNum}", bill.Head.DocNum);
+                _logger.LogWarning(ex, "ImportPreview: skip bill {DocNum}", bill.DocNum);
             }
         }
 
@@ -156,21 +151,44 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
         var sap     = scope.ServiceProvider.GetRequiredService<ISapArInvoiceService>();
 
         var detail = await monitor.GetDetailAsync(logId);
-        if (detail is null || string.IsNullOrEmpty(detail.SapRequest))
+        if (detail is null)
+        {
+            _logger.LogWarning("RetryAsync failed: Log ID {LogId} not found.", logId);
             return false;
+        }
 
-        // Only allow retry on FAILED or RETRY status
         if (detail.Status != gbVar.StatusFailed && detail.Status != gbVar.StatusRetry)
+        {
+            _logger.LogWarning("RetryAsync failed for Log ID {LogId}: Status is '{Status}', not FAILED or RETRY.", logId, detail.Status);
             return false;
+        }
 
+        var requestJson = !string.IsNullOrEmpty(detail.SapRequest) 
+            ? detail.SapRequest 
+            : detail.PosData;
+
+        if (string.IsNullOrEmpty(requestJson))
+        {
+            _logger.LogWarning("RetryAsync failed for Log ID {LogId}: Both SapRequest and PosData payloads are empty.", logId);
+            return false;
+        }
+        
         await monitor.UpdateStatusAsync(logId, gbVar.StatusProcessing);
 
         try
         {
-            var dto = DeserializeSapRequest(detail.SapRequest);
-            if (dto is null) return false;
+            var invoices = DeserializeRequest(requestJson, _logger);
+            if (invoices is null || !invoices.Any())
+            {
+                _logger.LogError("RetryAsync failed for Log ID {LogId}: Failed to deserialize request JSON.", logId);
+                await monitor.UpdateSapResponseAsync(logId, gbVar.StatusFailed, null, null, "Failed to deserialize request JSON for retry.");
+                return false;
+            }
+            
+            // The JSON in the DB should be the same as what we send to SAP.
+            await monitor.UpdateSapRequestAsync(logId, requestJson);
 
-            var (success, sapDocNum, errorMsg, rawResponse) = await sap.PostArInvoiceAsync(dto);
+            var (success, sapDocNum, errorMsg, rawResponse) = await sap.PostArInvoiceAsync(invoices);
 
             if (success)
                 await monitor.UpdateSapResponseAsync(logId, gbVar.StatusSuccess, sapDocNum, rawResponse, null);
@@ -181,6 +199,7 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
         }
         catch (Exception ex)
         {
+            _logger.LogError(ex, "RetryAsync exception for Log ID {LogId}.", logId);
             await monitor.UpdateSapResponseAsync(logId, gbVar.StatusFailed, null, null, ex.Message);
             return false;
         }
@@ -197,7 +216,7 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
         var config = await monitor.GetConfigDictAsync();
         var maxRetry = int.TryParse(config.GetValueOrDefault(gbVar.CfgMaxRetryCount, "3"), out var mr) ? mr : 3;
 
-        List<DTOs.Sap.SapArInvoiceRequestDto> bills;
+        List<SapArInvoiceHeadDto> bills;
         try
         {
             bills = docNos is { Count: > 0 }
@@ -217,30 +236,24 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
             var logId = string.Empty;
             try
             {
-                // Check for existing log (could be RETRY)
-                var existingQuery = new DTOs.Monitor.InterfaceLogQueryParams
-                {
-                    Search = bill.Head.DocNum, PageSize = 1
-                };
-                var existing = (await monitor.GetListAsync(existingQuery)).Items.FirstOrDefault(x => x.PosDocNo == bill.Head.DocNum);
+                var existingQuery = new DTOs.Monitor.InterfaceLogQueryParams { Search = bill.DocNum, PageSize = 1 };
+                var existing = (await monitor.GetListAsync(existingQuery)).Items.FirstOrDefault(x => x.PosDocNo == bill.DocNum);
 
-                var requestJson = SerializeAsDocumentArray(bill);
+                var requestJson = JsonSerializer.Serialize(new[] { bill }, JsonOpts);
 
                 if (existing is null)
                 {
-                    // New record
                     var log = new InterfaceLog
                     {
-                        PosDocNo     = bill.Head.DocNum,
-                        PosDocDate   = DateTime.TryParseExact(bill.Head.DocDate, "yyyyMMdd", null,
-                                         System.Globalization.DateTimeStyles.None, out var d) ? d : null,
-                        BranchCode   = bill.Head.BranchCode,
-                        BranchName   = bill.Head.BranchName,
-                        PosId        = bill.Head.POSID,
-                        CardCode     = bill.Head.CardCode,
-                        Channel      = bill.Head.Channel,
+                        PosDocNo     = bill.DocNum,
+                        PosDocDate   = DateTime.TryParse(bill.DocDate, out var d) ? d : null,
+                        BranchCode   = bill.BranchCode,
+                        BranchName   = bill.BranchName,
+                        PosId        = bill.POSID,
+                        CardCode     = bill.CardCode,
+                        Channel      = bill.Channel,
                         InterfaceType = "AR",
-                        DocTotal     = bill.Head.DocTotal,
+                        DocTotal     = bill.DocTotal,
                         PosData      = requestJson,
                         SapRequest   = requestJson,
                         Status       = gbVar.StatusProcessing
@@ -251,9 +264,10 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
                 {
                     logId = existing.Id;
                     await monitor.UpdateStatusAsync(logId, gbVar.StatusProcessing);
+                    await monitor.UpdateSapRequestAsync(logId, requestJson);
                 }
 
-                var (success, sapDocNum, errorMsg, rawResponse) = await sap.PostArInvoiceAsync(bill);
+                var (success, sapDocNum, errorMsg, rawResponse) = await sap.PostArInvoiceAsync(new List<SapArInvoiceHeadDto> { bill });
 
                 if (success)
                 {
@@ -262,7 +276,6 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
                 }
                 else
                 {
-                    // Get current retry count
                     var detail = await monitor.GetDetailAsync(logId);
                     var currentRetry = detail?.RetryCount ?? 0;
                     var newStatus = (currentRetry + 1) >= maxRetry ? gbVar.StatusFailed : gbVar.StatusRetry;
@@ -273,7 +286,7 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error processing bill {DocNum}", bill.Head.DocNum);
+                _logger.LogError(ex, "Error processing bill {DocNum}", bill.DocNum);
                 if (!string.IsNullOrEmpty(logId))
                     await monitor.UpdateSapResponseAsync(logId, gbVar.StatusFailed, null, null, ex.Message);
                 failed++;
@@ -284,144 +297,37 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
         return (sent, failed);
     }
 
-    // ------------------------------------------------------------------ POS JSON helpers
-
-    private static string SerializeAsDocumentArray(DTOs.Sap.SapArInvoiceRequestDto bill)
-    {
-        var h = bill.Head;
-        var doc = new
-        {
-            DocNum = h.DocNum,
-            DocDate = h.DocDate,
-            PymntGroup = h.PymntGroup,
-            DocDueDate = h.DocDueDate,
-            POSID = h.POSID,
-            CardCode = h.CardCode,
-            CardName = h.CardName,
-            CustTaxId = h.CustTaxId,
-            Address = h.Address,
-            CustVatBranch = h.CustVatBranch,
-            CustTel = h.CustTel,
-            CustMemberNo = h.CustMemberNo,
-            DocCur = h.DocCur,
-            BranchCode = h.BranchCode,
-            BranchName = h.BranchName,
-            VatBranch = h.VatBranch,
-            Comments = h.Comments,
-            Channel = h.Channel,
-            CustBillPoint = h.CustBillPoint,
-            CustRedeemPoint = h.CustRedeemPoint,
-            CustBalancePoint = h.CustBalancePoint,
-            TotalAmtBefDis = h.TotalAmtBefDis,
-            DiscPrcnt = h.DiscPrcnt,
-            DiscSum = h.DiscSum,
-            DownPaymentNo = h.DownPaymentNo,
-            DownPaymentAmt = h.DownPaymentAmt,
-            VatSum = h.VatSum,
-            DocTotal = h.DocTotal,
-            DocumentLines = bill.Lines
-        };
-
-        return JsonSerializer.Serialize(new[] { doc }, JsonOpts);
-    }
-
-    private static DTOs.Sap.SapArInvoiceRequestDto? DeserializeSapRequest(string json)
+    private static List<SapArInvoiceHeadDto>? DeserializeRequest(string json, ILogger logger)
     {
         try
         {
-            // Try old format first
-            var old = JsonSerializer.Deserialize<DTOs.Sap.SapArInvoiceRequestDto>(json, JsonOpts);
-            if (old is not null && old.Head is not null)
-                return old;
+            // The standard format is now an array of heads, so try this first.
+            var invoices = JsonSerializer.Deserialize<List<SapArInvoiceHeadDto>>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            if (invoices is not null && invoices.Any())
+            {
+                return invoices;
+            }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Could not deserialize as List<SapArInvoiceHeadDto>. Will try parsing as single object or old format.");
+        }
 
         try
         {
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-
-            JsonElement el;
-            if (root.ValueKind == JsonValueKind.Array && root.GetArrayLength() > 0)
-                el = root[0];
-            else if (root.ValueKind == JsonValueKind.Object)
-                el = root;
-            else
-                return null;
-
-            DTOs.Sap.SapArInvoiceRequestDto dto = new();
-            var head = new DTOs.Sap.SapArInvoiceHeadDto();
-
-            string? GetString(string name)
+            // Fallback for a single object {"DocNum":...} instead of [{"DocNum":...}]
+            var invoice = JsonSerializer.Deserialize<SapArInvoiceHeadDto>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            if (invoice is not null && !string.IsNullOrEmpty(invoice.DocNum))
             {
-                if (el.TryGetProperty(name, out var p) && p.ValueKind != JsonValueKind.Null)
-                    return p.GetRawText().Trim('"');
-                return string.Empty;
+                return new List<SapArInvoiceHeadDto> { invoice };
             }
-
-            decimal? GetDecimal(string name)
-            {
-                if (!el.TryGetProperty(name, out var p) || p.ValueKind == JsonValueKind.Null)
-                    return null;
-                try
-                {
-                    if (p.ValueKind == JsonValueKind.Number) return p.GetDecimal();
-                    var s = p.GetRawText().Trim('"');
-                    if (decimal.TryParse(s, out var v)) return v;
-                }
-                catch { }
-                return null;
-            }
-
-            head.DocNum = GetString("DocNum") ?? string.Empty;
-            head.DocDate = GetString("DocDate") ?? string.Empty;
-            head.PymntGroup = GetString("PymntGroup") ?? "Cash";
-            head.DocDueDate = GetString("DocDueDate") ?? head.DocDate;
-            head.POSID = GetString("POSID") ?? string.Empty;
-            head.CardCode = GetString("CardCode") ?? string.Empty;
-            head.CardName = GetString("CardName") ?? string.Empty;
-            head.CustTaxId = GetString("CustTaxId");
-            head.Address = GetString("Address");
-            head.CustVatBranch = GetString("CustVatBranch");
-            head.CustTel = GetString("CustTel");
-            head.CustMemberNo = GetString("CustMemberNo");
-            head.DocCur = GetString("DocCur") ?? "THB";
-            head.BranchCode = GetString("BranchCode") ?? string.Empty;
-            head.BranchName = GetString("BranchName") ?? string.Empty;
-            head.VatBranch = GetString("VatBranch") ?? string.Empty;
-            head.Comments = GetString("Comments");
-            head.Channel = GetString("Channel") ?? string.Empty;
-            head.CustBillPoint = GetDecimal("CustBillPoint");
-            head.CustRedeemPoint = GetDecimal("CustRedeemPoint");
-            head.CustBalancePoint = GetDecimal("CustBalancePoint");
-            head.TotalAmtBefDis = GetDecimal("TotalAmtBefDis") ?? 0m;
-            head.DiscPrcnt = GetDecimal("DiscPrcnt") ?? 0m;
-            head.DiscSum = GetDecimal("DiscSum") ?? 0m;
-            head.DownPaymentNo = GetString("DownPaymentNo");
-            head.DownPaymentAmt = GetDecimal("DownPaymentAmt");
-            head.VatSum = GetDecimal("VatSum") ?? 0m;
-            head.DocTotal = GetDecimal("DocTotal") ?? 0m;
-
-            dto.Head = head;
-
-            // Lines: try DocumentLines, then Lines
-            if (el.TryGetProperty("DocumentLines", out var linesEl) || el.TryGetProperty("Lines", out linesEl))
-            {
-                try
-                {
-                    dto.Lines = JsonSerializer.Deserialize<List<DTOs.Sap.SapArInvoiceLineDto>>(linesEl.GetRawText(), JsonOpts) ?? new List<DTOs.Sap.SapArInvoiceLineDto>();
-                }
-                catch
-                {
-                    dto.Lines = new List<DTOs.Sap.SapArInvoiceLineDto>();
-                }
-            }
-
-            return dto;
         }
-        catch
+        catch (Exception ex)
         {
+            logger.LogError(ex, "Could not deserialize request from JSON.");
             return null;
         }
+
+        return null; // Return null if all attempts fail
     }
 }

@@ -190,6 +190,17 @@ public class InterfaceMonitorService : IInterfaceMonitorService
         await _db.ExecuteAsync(sql, new { Id = id, Status = status, ErrorMessage = errorMessage, UpdatedAt = DateTime.UtcNow });
     }
 
+    public async Task UpdateSapRequestAsync(string id, string? sapRequest)
+    {
+        var sql = @"
+            UPDATE interface_logs
+            SET sap_request = @SapRequest,
+                updated_at = @UpdatedAt
+            WHERE id = @Id";
+
+        await _db.ExecuteAsync(sql, new { Id = id, SapRequest = sapRequest, UpdatedAt = DateTime.UtcNow });
+    }
+
     public async Task UpdateSapResponseAsync(string id, string status, string? sapDocNum, string? sapResponse, string? errorMessage)
     {
         var sql = @"

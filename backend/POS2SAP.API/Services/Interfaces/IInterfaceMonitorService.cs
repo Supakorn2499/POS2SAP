@@ -12,6 +12,7 @@ public interface IInterfaceMonitorService
     Task<InterfaceLogDetailDto?> GetDetailAsync(string id);
     Task<string> InsertLogAsync(InterfaceLog log);
     Task UpdateStatusAsync(string id, string status, string? errorMessage = null);
+    Task UpdateSapRequestAsync(string id, string? sapRequest);
     Task UpdateSapResponseAsync(string id, string status, string? sapDocNum, string? sapResponse, string? errorMessage);
     /// <summary>Hard-delete logs whose status is in <paramref name="statuses"/> (default: PENDING, RETRY).
     /// If <paramref name="docNos"/> is provided, only matching pos_doc_no rows are deleted.</summary>

@@ -15,7 +15,7 @@ public class SapArInvoiceService : ISapArInvoiceService
 
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
-        PropertyNamingPolicy = null,   // keep PascalCase as-is for SAP
+        PropertyNamingPolicy = null,
         WriteIndented = false
     };
 
@@ -30,15 +30,15 @@ public class SapArInvoiceService : ISapArInvoiceService
     }
 
     public async Task<(bool Success, string? SapDocNum, string? ErrorMessage, string? RawResponse)> PostArInvoiceAsync(
-        SapArInvoiceRequestDto dto)
+        List<SapArInvoiceHeadDto> invoices)
     {
         var config = await _monitor.GetConfigDictAsync("ARInvoice");
-        var baseUrl = GetSapBaseUrl(config);
-        var endpoint = $"{baseUrl.TrimEnd('/')}/arinvoice";
+        var endpoint = GetSapArInvoiceUrl(config);
+        var docNumForLogging = invoices.FirstOrDefault()?.DocNum ?? "N/A";
 
         SetAuthHeader(config);
 
-        var json = JsonSerializer.Serialize(dto, JsonOpts);
+        var json = JsonSerializer.Serialize(invoices, JsonOpts);
         var content = new StringContent(json, Encoding.UTF8, "application/json");
 
         int maxRetry = int.TryParse(config.GetValueOrDefault(gbVar.CfgMaxRetryCount, "3"), out var mr) ? mr : 3;
@@ -47,7 +47,8 @@ public class SapArInvoiceService : ISapArInvoiceService
         {
             try
             {
-                _logger.LogInformation("SAP call attempt {Attempt}/{Max} for DocNum={DocNum}", attempt, maxRetry, dto.Head.DocNum);
+                _logger.LogInformation("SAP call attempt {Attempt}/{Max} for DocNum={DocNum} to {Endpoint}", attempt, maxRetry, docNumForLogging, endpoint);
+                _logger.LogDebug("SAP Payload for {DocNum}: {Payload}", docNumForLogging, json);
 
                 var response = await _httpClient.PostAsync(endpoint, content);
                 var raw = await response.Content.ReadAsStringAsync();
@@ -55,21 +56,21 @@ public class SapArInvoiceService : ISapArInvoiceService
                 if (response.IsSuccessStatusCode)
                 {
                     string? sapDocNum = ExtractSapDocNum(raw);
-                    _logger.LogInformation("SAP success DocNum={DocNum} SapDocNum={SapDocNum}", dto.Head.DocNum, sapDocNum);
+                    _logger.LogInformation("SAP success DocNum={DocNum} SapDocNum={SapDocNum}", docNumForLogging, sapDocNum);
                     return (true, sapDocNum, null, raw);
                 }
 
-                _logger.LogWarning("SAP error attempt {Attempt}: {Status} {Body}", attempt, response.StatusCode, raw);
+                _logger.LogWarning("SAP error attempt {Attempt} for DocNum={DocNum}: {Status} {Body}", attempt, docNumForLogging, response.StatusCode, raw);
 
                 if (attempt < maxRetry)
-                    await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, attempt)));  // 2s, 4s, 8s
+                    await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, attempt)));
 
                 if (attempt == maxRetry)
                     return (false, null, $"HTTP {(int)response.StatusCode}: {raw}", raw);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "SAP call exception attempt {Attempt} DocNum={DocNum}", attempt, dto.Head.DocNum);
+                _logger.LogError(ex, "SAP call exception attempt {Attempt} DocNum={DocNum}", attempt, docNumForLogging);
                 if (attempt == maxRetry)
                     return (false, null, ex.Message, null);
                 await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, attempt)));
@@ -81,7 +82,7 @@ public class SapArInvoiceService : ISapArInvoiceService
 
     // ------------------------------------------------------------------ Helpers
 
-    private static string GetSapBaseUrl(Dictionary<string, string> config)
+    private static string GetSapArInvoiceUrl(Dictionary<string, string> config)
     {
         var env = config.GetValueOrDefault(gbVar.CfgSapEnv, "TST").ToUpper();
         return env == "PRD"
@@ -116,15 +117,31 @@ public class SapArInvoiceService : ISapArInvoiceService
     {
         try
         {
+            // The response might be an array, a single object, or a nested object.
             using var doc = JsonDocument.Parse(raw);
-            if (doc.RootElement.TryGetProperty("DocNum", out var v)) return v.GetString();
-            if (doc.RootElement.TryGetProperty("docNum", out var v2)) return v2.GetString();
-            if (doc.RootElement.TryGetProperty("data", out var data))
+            var root = doc.RootElement;
+
+            // Case 1: Response is a JSON array `[{"DocNum": "123"}]`
+            if (root.ValueKind == JsonValueKind.Array && root.GetArrayLength() > 0)
+            {
+                root = root[0];
+            }
+
+            // Case 2: Response is an object `{"DocNum": "123"}` (or the first element from array)
+            if (root.TryGetProperty("DocNum", out var v)) return v.GetString();
+            if (root.TryGetProperty("docNum", out var v2)) return v2.GetString();
+            
+            // Case 3: Response is nested `{"data": {"DocNum": "123"}}`
+            if (root.TryGetProperty("data", out var data))
             {
                 if (data.TryGetProperty("DocNum", out var dv)) return dv.GetString();
             }
         }
-        catch { /* raw is not JSON or unexpected shape */ }
+        catch(Exception e) 
+        { 
+            /* raw is not JSON or unexpected shape */
+            Console.WriteLine($"Error parsing SAP response: {e.Message}");
+        }
         return null;
     }
 }

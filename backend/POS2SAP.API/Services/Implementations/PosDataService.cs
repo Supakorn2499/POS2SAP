@@ -19,10 +19,10 @@ public class PosDataService : IPosDataService
         _db = db;
     }
 
-    public Task<List<SapArInvoiceRequestDto>> GetPendingBillsAsync(int batchSize = 500)
+    public Task<List<SapArInvoiceHeadDto>> GetPendingBillsAsync(int batchSize = 500)
         => GetPendingBillsAsyncImpl(batchSize);
 
-    private async Task<List<SapArInvoiceRequestDto>> GetPendingBillsAsyncImpl(int batchSize = 500)
+    private async Task<List<SapArInvoiceHeadDto>> GetPendingBillsAsyncImpl(int batchSize = 500)
     {
         // Head: ordertransaction — TransactionStatusID=2 (ชำระแล้ว)
         // NOTE: ตรวจสอบ ProductCode/ProductName ในตาราง products หากชื่อ column ต่างกัน
@@ -48,14 +48,12 @@ public class PosDataService : IPosDataService
                 a.TransactionNote                                        AS Comments,
                 ISNULL(sm.SaleModeName, CAST(a.SaleMode AS NVARCHAR(20))) AS Channel,
                 NULL                                                     AS CustBillPoint,
-                NULL                                                     AS CustRedeemPoint,
+                NULL                                                     AS CustRedeemPoing,
                 NULL                                                     AS CustBalancePoint,
                 a.ReceiptRetailPrice                                     AS TotalAmtBefDis,
                 0                                                        AS DiscPrcnt,
-                a.TotalDiscount                                          AS DiscSum,
                 NULL                                                     AS DownPaymentNo,
                 NULL                                                     AS DownPaymentAmt,
-                a.TransactionVAT                                         AS VatSum,
                 a.ReceiptPayPrice                                        AS DocTotal,
                 a.TranKey
             FROM ordertransaction a
@@ -79,12 +77,11 @@ public class PosDataService : IPosDataService
             SELECT
                 b.TranKey,
                 ISNULL(c.ProductCode, CAST(b.ProductID AS NVARCHAR(50)))  AS ItemCode,
+                ISNULL(c.CategoryCode, '')                                 AS ItemCategory,
                 ISNULL(c.ProductName, '')                                  AS Dscription,
                 b.Comment                                                  AS FreeTxt,
                 b.TotalQty                                                 AS Quantity,
                 ISNULL(c.ProductUnitName, '')                              AS UomCode,
-                ISNULL(c.ProductUnitName, '')                              AS UnitMsr,
-                b.PricePerUnit                                             AS PriceBefDi,
                 ISNULL(b.DiscPricePercent, 0)                             AS DiscPrcnt,
                 b.ProductBeforeVAT / NULLIF(b.TotalQty, 0)                AS Price,
                 (b.ProductBeforeVAT + b.ProductVAT) / NULLIF(b.TotalQty, 0) AS PriceAfVat,
@@ -103,22 +100,22 @@ public class PosDataService : IPosDataService
         var linesByKey = allLines.GroupBy(l => (string)l.TranKey)
             .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
 
-        var results = new List<SapArInvoiceRequestDto>();
+        var results = new List<SapArInvoiceHeadDto>();
         foreach (var h in heads)
         {
-            var dto = MapHead(h);
+            var headDto = MapHead(h);
             var lines = linesByKey.GetValueOrDefault((string)h.TranKey) ?? new List<dynamic>();
-            dto.Lines = lines.Select<dynamic, SapArInvoiceLineDto>((l, idx) => MapLine(l, Str(h.PosDocNo), idx, Str(h.BranchCode))).ToList();
-            results.Add(dto);
+            headDto.DocumentLines = lines.Select<dynamic, SapArInvoiceLineDto>((l, idx) => MapLine(l, Str(h.PosDocNo), idx)).ToList();
+            results.Add(headDto);
         }
 
         return results;
     }
 
-    public Task<List<SapArInvoiceRequestDto>> GetBillsByDocNosAsync(IEnumerable<string> docNos)
+    public Task<List<SapArInvoiceHeadDto>> GetBillsByDocNosAsync(IEnumerable<string> docNos)
         => GetBillsByDocNosAsyncImpl(docNos);
 
-    private async Task<List<SapArInvoiceRequestDto>> GetBillsByDocNosAsyncImpl(IEnumerable<string> docNos)
+    private async Task<List<SapArInvoiceHeadDto>> GetBillsByDocNosAsyncImpl(IEnumerable<string> docNos)
     {
         var docNoList = docNos.ToList();
         if (!docNoList.Any()) return new();
@@ -141,14 +138,12 @@ public class PosDataService : IPosDataService
                 a.TransactionNote                                        AS Comments,
                 ISNULL(sm.SaleModeName, CAST(a.SaleMode AS NVARCHAR(20))) AS Channel,
                 NULL                                                     AS CustBillPoint,
-                NULL                                                     AS CustRedeemPoint,
+                NULL                                                     AS CustRedeemPoing,
                 NULL                                                     AS CustBalancePoint,
                 a.ReceiptRetailPrice                                     AS TotalAmtBefDis,
                 0                                                        AS DiscPrcnt,
-                a.TotalDiscount                                          AS DiscSum,
                 NULL                                                     AS DownPaymentNo,
                 NULL                                                     AS DownPaymentAmt,
-                a.TransactionVAT                                         AS VatSum,
                 a.ReceiptPayPrice                                        AS DocTotal,
                 a.TranKey
             FROM ordertransaction a
@@ -160,21 +155,20 @@ public class PosDataService : IPosDataService
             ORDER BY a.SaleDate, a.ReceiptNumber";
 
         var heads = (await _db.QueryAsync<dynamic>(headSql, new { DocNos = docNoList })).ToList();
-        var results = new List<SapArInvoiceRequestDto>();
+        var results = new List<SapArInvoiceHeadDto>();
 
         foreach (var h in heads)
         {
-            var dto = MapHead(h);
+            var headDto = MapHead(h);
 
             var lineSql = @"
                 SELECT
                     ISNULL(c.ProductCode, CAST(b.ProductID AS NVARCHAR(50)))  AS ItemCode,
+                    ISNULL(c.CategoryCode, '')                                 AS ItemCategory,
                     ISNULL(c.ProductName, '')                                  AS Dscription,
                     b.Comment                                                  AS FreeTxt,
                     b.TotalQty                                                 AS Quantity,
                     ISNULL(c.ProductUnitName, '')                              AS UomCode,
-                    ISNULL(c.ProductUnitName, '')                              AS UnitMsr,
-                    b.PricePerUnit                                             AS PriceBefDi,
                     ISNULL(b.DiscPricePercent, 0)                             AS DiscPrcnt,
                     b.ProductBeforeVAT / NULLIF(b.TotalQty, 0)                AS Price,
                     (b.ProductBeforeVAT + b.ProductVAT) / NULLIF(b.TotalQty, 0) AS PriceAfVat,
@@ -192,8 +186,8 @@ public class PosDataService : IPosDataService
             var lines = (await _db.QueryAsync<dynamic>(lineSql, new {
                 TranKey = (string)h.TranKey
             })).ToList();
-            dto.Lines = lines.Select<dynamic, SapArInvoiceLineDto>((l, idx) => MapLine(l, Str(h.PosDocNo), idx, Str(h.BranchCode))).ToList();
-            results.Add(dto);
+            headDto.DocumentLines = lines.Select<dynamic, SapArInvoiceLineDto>((l, idx) => MapLine(l, Str(h.PosDocNo), idx)).ToList();
+            results.Add(headDto);
         }
 
         return results;
@@ -205,71 +199,63 @@ public class PosDataService : IPosDataService
     private static decimal Dec(object? val) => val == null || val is DBNull ? 0m : Convert.ToDecimal(val);
     private static decimal? DecNull(object? val) => val == null || val is DBNull ? null : Convert.ToDecimal(val);
 
-    private static SapArInvoiceRequestDto MapHead(dynamic h)
+    private static SapArInvoiceHeadDto MapHead(dynamic h)
     {
-        var docDate = h.DocDate is DateTime dt ? dt.ToString("yyyyMMdd") : h.DocDate?.ToString() ?? string.Empty;
-        return new SapArInvoiceRequestDto
+        var docDate = h.DocDate is DateTime dt ? dt.ToString("yyyy-MM-dd") : h.DocDate?.ToString() ?? string.Empty;
+        return new SapArInvoiceHeadDto
         {
-            Head = new()
-            {
-                DocNum          = Str(h.PosDocNo),
-                DocDate         = docDate,
-                DocDueDate      = docDate,
-                PymntGroup      = "Cash",
-                POSID           = Str(h.PosId),
-                CardCode        = Str(h.CardCode),
-                CardName        = Str(h.CardName),
-                CustTaxId       = Str(h.CustTaxId),
-                Address         = Str(h.Address),
-                CustVatBranch   = Str(h.CustVatBranch),
-                CustTel         = Str(h.CustTel),
-                CustMemberNo    = Str(h.CustMemberNo),
-                DocCur          = "THB",
-                BranchCode      = Str(h.BranchCode),
-                BranchName      = Str(h.BranchName),
-                VatBranch       = Str(h.VatBranch),
-                Comments        = Str(h.Comments),
-                Channel         = Str(h.Channel),
-                CustBillPoint   = DecNull(h.CustBillPoint),
-                CustRedeemPoint = DecNull(h.CustRedeemPoint),
-                CustBalancePoint = DecNull(h.CustBalancePoint),
-                TotalAmtBefDis  = Dec(h.TotalAmtBefDis),
-                DiscPrcnt       = Dec(h.DiscPrcnt),
-                DiscSum         = Dec(h.DiscSum),
-                DownPaymentNo   = Str(h.DownPaymentNo),
-                DownPaymentAmt  = DecNull(h.DownPaymentAmt),
-                VatSum          = Dec(h.VatSum),
-                DocTotal        = Dec(h.DocTotal)
-            },
-            Lines = new()
+            DocNum          = Str(h.PosDocNo),
+            DocDate         = docDate,
+            DocDueDate      = docDate,
+            PymntGroup      = "Cash",
+            POSID           = Str(h.PosId),
+            CardCode        = Str(h.CardCode),
+            CardName        = Str(h.CardName),
+            CustTaxId       = Str(h.CustTaxId),
+            Address         = Str(h.Address),
+            CustVatBranch   = Str(h.CustVatBranch),
+            CustTel         = Str(h.CustTel),
+            CustMemberNo    = Str(h.CustMemberNo),
+            DocCur          = "THB",
+            BranchCode      = Str(h.BranchCode),
+            BranchName      = Str(h.BranchName),
+            VatBranch       = Str(h.VatBranch),
+            Comments        = Str(h.Comments),
+            Channel         = Str(h.Channel),
+            CustBillPoint   = DecNull(h.CustBillPoint),
+            CustRedeemPoing = DecNull(h.CustRedeemPoing),
+            CustBalancePoint = DecNull(h.CustBalancePoint),
+            TotalAmtBefDis  = Dec(h.TotalAmtBefDis),
+            DiscPrcnt       = Dec(h.DiscPrcnt),
+            DownPaymentNo   = Str(h.DownPaymentNo),
+            DownPaymentAmt  = DecNull(h.DownPaymentAmt),
+            DocTotal        = Dec(h.DocTotal),
+            DocumentLines   = new()
         };
     }
 
-    private static SapArInvoiceLineDto MapLine(dynamic l, string docNum, int idx, string branchCode)
+    private static SapArInvoiceLineDto MapLine(dynamic l, string docNum, int idx)
     {
         return new SapArInvoiceLineDto
         {
-            DocNum      = docNum,
-            LineNum     = idx,
-            ItemCode    = Str(l.ItemCode),
-            Dscription  = Str(l.Dscription),
-            FreeTxt     = Str(l.FreeTxt),
-            Quantity    = Dec(l.Quantity),
-            UomCode     = Str(l.UomCode),
-            UnitMsr     = Str(l.UnitMsr),
-            PriceBefDi  = Dec(l.PriceBefDi),
-            DiscPrcnt   = Dec(l.DiscPrcnt),
-            Price       = Dec(l.Price),
-            PriceAfVat  = Dec(l.PriceAfVat),
-            VatPrcnt    = 7m,
-            VatGroup    = "S07",
-            VatSum      = Dec(l.VatSum),
-            LineTotal   = Dec(l.LineTotal),
-            GTotal      = Dec(l.GTotal),
-            WhsCode     = Str(l.WhsCode),
-            Project     = branchCode,
-            OcrCode     = branchCode,
-            OcrCode2    = "CENTER"
+            DocNum       = docNum,
+            LineNum      = idx,
+            ItemCode     = Str(l.ItemCode),
+            ItemCategory = Str(l.ItemCategory),
+            Dscription   = Str(l.Dscription),
+            FreeTxt      = Str(l.FreeTxt),
+            Quantity     = Dec(l.Quantity),
+            UomCode      = Str(l.UomCode),
+            DiscPrcnt    = Dec(l.DiscPrcnt),
+            Price        = Dec(l.Price),
+            PriceAfVat   = Dec(l.PriceAfVat),
+            VatPrcnt     = 7m,
+            VatGroup     = "S07",
+            VatSum       = Dec(l.VatSum),
+            LineTotal    = Dec(l.LineTotal),
+            GTotal       = Dec(l.GTotal),
+            WhsCode      = Str(l.WhsCode),
+            CouponNo     = new()
         };
     }
 }
