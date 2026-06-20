@@ -165,6 +165,11 @@ build_backend_log_utf8.txt
 # Local secret overrides — commit appsettings.json only, not local variants
 backend/POS2SAP.API/appsettings.Local.json
 backend/POS2SAP.API/appsettings.*.Local.json
+backend/POS2SAP.API/appsettings.Development.json
 
 # User secrets (dotnet user-secrets)
 secrets.json
+
+# Local tokens / debug artifacts
+token.txt
+backend/POS2SAP.API/backend-debug.log
