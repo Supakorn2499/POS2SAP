@@ -1,5 +1,5 @@
 // src/pages/MonitorPage.tsx
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { Search, X, Play, RefreshCw, Zap } from 'lucide-react';
@@ -15,18 +15,31 @@ import type { BranchOptionDto, InterfaceLogQueryParams } from '@/types/monitor';
 
 const STATUS_OPTIONS = ['', 'PENDING', 'PROCESSING', 'SUCCESS', 'FAILED', 'RETRY'];
 
+const FILTER_KEY = 'monitorFilters';
+
+function loadFilters() {
+  try {
+    const raw = sessionStorage.getItem(FILTER_KEY);
+    if (raw) return JSON.parse(raw) as Record<string, string>;
+  } catch { /* ignore */ }
+  return null;
+}
+
 export default function MonitorPage() {
   const navigate = useNavigate();
   const { t } = useLanguage();
   const { username } = useAuth();
 
+  // Restore last filter from sessionStorage (survives back-navigation)
+  const _saved = loadFilters();
+
   // Pending (filter bar state)
-  const [pendingSearch, setPendingSearch] = useState('');
-  const [pendingStatus, setPendingStatus] = useState('');
-  const [pendingInterface, setPendingInterface] = useState('ARInvoice');
-  const [pendingBranch, setPendingBranch] = useState('');
-  const [pendingDateFrom, setPendingDateFrom] = useState('');
-  const [pendingDateTo, setPendingDateTo] = useState('');
+  const [pendingSearch, setPendingSearch] = useState(_saved?.search ?? '');
+  const [pendingStatus, setPendingStatus] = useState(_saved?.status ?? '');
+  const [pendingInterface, setPendingInterface] = useState(_saved?.interfaceType ?? 'ARInvoice');
+  const [pendingBranch, setPendingBranch] = useState(_saved?.branchCode ?? '');
+  const [pendingDateFrom, setPendingDateFrom] = useState(_saved?.dateFrom ?? '');
+  const [pendingDateTo, setPendingDateTo] = useState(_saved?.dateTo ?? '');
 
   const { data: branchOptions = [] } = useQuery<BranchOptionDto[]>({
     queryKey: ['monitor-branches'],
@@ -35,10 +48,32 @@ export default function MonitorPage() {
     retry: 1,
   });
 
-  // Committed query params
-  const [params, setParams] = useState<InterfaceLogQueryParams>({
-    page: 1, pageSize: 20, sortBy: 'created_at', sortDirection: 'desc', interfaceType: 'ARInvoice'
+  // Committed query params — restore from sessionStorage if available
+  const [params, setParams] = useState<InterfaceLogQueryParams>(() => {
+    const s = loadFilters();
+    if (s) return {
+      page: 1, pageSize: 20, sortBy: 'created_at', sortDirection: 'desc',
+      interfaceType: s.interfaceType || 'ARInvoice',
+      search:        s.search        || undefined,
+      status:        s.status        || undefined,
+      branchCode:    s.branchCode    || undefined,
+      dateFrom:      s.dateFrom      || undefined,
+      dateTo:        s.dateTo        || undefined,
+    } as InterfaceLogQueryParams;
+    return { page: 1, pageSize: 20, sortBy: 'created_at', sortDirection: 'desc', interfaceType: 'ARInvoice' };
   });
+
+  // Persist committed params to sessionStorage whenever they change
+  useEffect(() => {
+    sessionStorage.setItem(FILTER_KEY, JSON.stringify({
+      interfaceType: params.interfaceType ?? '',
+      search:        params.search        ?? '',
+      status:        params.status        ?? '',
+      branchCode:    params.branchCode    ?? '',
+      dateFrom:      params.dateFrom      ?? '',
+      dateTo:        params.dateTo        ?? '',
+    }));
+  }, [params]);
 
   const [triggering, setTriggering] = useState(false);
   const [simulating, setSimulating] = useState(false);
@@ -92,6 +127,7 @@ export default function MonitorPage() {
   function handleClear() {
     setPendingSearch(''); setPendingStatus(''); setPendingBranch(''); setPendingInterface('ARInvoice');
     setPendingDateFrom(''); setPendingDateTo('');
+    sessionStorage.removeItem(FILTER_KEY);
     setParams({ page: 1, pageSize: 20, sortBy: 'created_at', sortDirection: 'desc', interfaceType: 'ARInvoice' });
   }
 

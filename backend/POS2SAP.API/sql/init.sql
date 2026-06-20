@@ -125,3 +125,30 @@ END
 ELSE
     PRINT 'Table already exists: refresh_tokens';
 
+-- --------------------------------------------------------
+-- Table: paytype_gl_mapping  (Incoming Payment GL mapping)
+-- ประกอบด้วยใน paytype_gl_mapping.sql — นำเข้ารันแยกต่างหาก
+-- Included here only as CREATE stub (no seed — run paytype_gl_mapping.sql for seed)
+-- --------------------------------------------------------
+IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='paytype_gl_mapping' AND xtype='U')
+BEGIN
+    CREATE TABLE paytype_gl_mapping (
+        MappingID       INT IDENTITY(1,1) PRIMARY KEY,
+        PayTypeID       INT           NOT NULL,
+        PayTypeName     NVARCHAR(100) NULL,
+        SapPayCategory  NVARCHAR(20)  NOT NULL DEFAULT 'SKIP',
+        SapGlAccount    NVARCHAR(50)  NULL,
+        SapPayTypeName  NVARCHAR(100) NULL,
+        IsActive        TINYINT       NOT NULL DEFAULT 1,
+        SortOrder       INT           NOT NULL DEFAULT 0,
+        Remarks         NVARCHAR(200) NULL,
+        CreatedAt       DATETIME      NOT NULL DEFAULT GETDATE(),
+        UpdatedAt       DATETIME      NOT NULL DEFAULT GETDATE(),
+        CONSTRAINT UQ_paytype_gl_PayTypeID UNIQUE (PayTypeID)
+    );
+
+    PRINT 'Created table: paytype_gl_mapping — run paytype_gl_mapping.sql to seed GL accounts';
+END
+ELSE
+    PRINT 'Table already exists: paytype_gl_mapping';
+

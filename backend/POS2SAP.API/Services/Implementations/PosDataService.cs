@@ -310,6 +310,242 @@ public class PosDataService : IPosDataService
         return results;
     }
 
+    // ------------------------------------------------------------------ Incoming Payment queries
+
+    public Task<List<SapIncomingPaymentDto>> GetPendingPaymentsAsync(int batchSize = 500)
+        => GetPaymentsAsyncImpl(null, null, null, batchSize, requireArSuccess: true);
+
+    public Task<List<SapIncomingPaymentDto>> GetPaymentsByDocNosAsync(IEnumerable<string> docNos)
+        => GetPaymentsAsyncImpl(docNos.ToList(), null, null, 1000, requireArSuccess: false);
+
+    public Task<List<SapIncomingPaymentDto>> GetPaymentsByFilterAsync(DateTime dateFrom, DateTime dateTo, string? branchCode, int batchSize = 500)
+        => GetPaymentsAsyncImpl(null, dateFrom, dateTo, batchSize, requireArSuccess: false, branchCode: branchCode);
+
+    /// <summary>
+    /// Core payment query:
+    ///   requireArSuccess=true  → only receipts that have AR SUCCESS in interface_logs
+    ///                            and no AP PENDING/PROCESSING/SUCCESS yet (used by scheduler)
+    ///   requireArSuccess=false → fetch by docNos or date range regardless of AR status
+    ///                            (used for manual preview / retry)
+    /// </summary>
+    private async Task<List<SapIncomingPaymentDto>> GetPaymentsAsyncImpl(
+        List<string>? docNos,
+        DateTime? dateFrom,
+        DateTime? dateTo,
+        int batchSize,
+        bool requireArSuccess,
+        string? branchCode = null)
+    {
+        batchSize = Math.Clamp(batchSize, 1, 1000);
+
+        // ---------------------------------------------------------------- Head SQL
+        string headSql;
+        object headParam;
+
+        if (docNos is { Count: > 0 })
+        {
+            headSql = @"
+                SELECT
+                    a.ReceiptNumber                                              AS PosDocNo,
+                    CONVERT(varchar(10), a.SaleDate, 23)                        AS DocDate,
+                    ISNULL(s.SLOC, '')                                          AS CardCode,
+                    ISNULL(a.MemberName, '')                                    AS CardName,
+                    CAST(a.ComputerID AS NVARCHAR(20))                          AS PosId,
+                    ISNULL(NULLIF(s.PTTShopCode, ''), s.shopcode)               AS BranchCode,
+                    ISNULL(s.BranchName, '')                                    AS BranchName,
+                    ISNULL(sm.SaleModeName, CAST(a.SaleMode AS NVARCHAR(20)))   AS Channel,
+                    ISNULL(a.TransactionNote, '')                               AS Comments,
+                    ISNULL(a.ReceiptPayPrice, 0)                                AS DocTotal,
+                    ISNULL(il.sap_doc_num, '')                                  AS ArSapDocNum,
+                    a.TranKey
+                FROM ordertransaction a
+                LEFT JOIN shop_data s  ON s.ShopID = a.ShopID
+                LEFT JOIN salemode sm  ON sm.SaleModeID = TRY_CAST(a.SaleMode AS INT)
+                LEFT JOIN interface_logs il
+                    ON il.pos_doc_no = a.ReceiptNumber
+                    AND il.interface_type = 'AR'
+                    AND il.status = 'SUCCESS'
+                    AND il.is_deleted = 0
+                WHERE a.ReceiptNumber IN @DocNos
+                  AND a.TransactionStatusID = 2
+                  AND ISNULL(a.Deleted, 0) = 0
+                ORDER BY a.SaleDate, a.ReceiptNumber";
+            headParam = new { DocNos = docNos };
+        }
+        else
+        {
+            var df = dateFrom?.Date ?? new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+            var dtExcl = (dateTo?.Date ?? df).AddDays(1);
+
+            // requireArSuccess=true: only receipts with SUCCESS AR invoice
+            // (AP duplicate-send prevention is handled in RunIncomingPaymentBatchAsync — not in SQL)
+            var arSuccessClause = requireArSuccess ? @"
+                  AND EXISTS (
+                    SELECT 1 FROM interface_logs il
+                    WHERE il.pos_doc_no = a.ReceiptNumber
+                      AND il.interface_type = 'AR'
+                      AND il.status = 'SUCCESS'
+                      AND il.is_deleted = 0
+                  )" : "";
+
+            var branchClause = string.IsNullOrWhiteSpace(branchCode)
+                ? ""
+                : "AND (s.shopcode = @BranchCode OR s.PTTShopCode = @BranchCode)";
+
+            headSql = $@"
+                SELECT TOP {batchSize}
+                    a.ReceiptNumber                                              AS PosDocNo,
+                    CONVERT(varchar(10), a.SaleDate, 23)                        AS DocDate,
+                    ISNULL(s.SLOC, '')                                          AS CardCode,
+                    ISNULL(a.MemberName, '')                                    AS CardName,
+                    CAST(a.ComputerID AS NVARCHAR(20))                          AS PosId,
+                    ISNULL(NULLIF(s.PTTShopCode, ''), s.shopcode)               AS BranchCode,
+                    ISNULL(s.BranchName, '')                                    AS BranchName,
+                    ISNULL(sm.SaleModeName, CAST(a.SaleMode AS NVARCHAR(20)))   AS Channel,
+                    ISNULL(a.TransactionNote, '')                               AS Comments,
+                    ISNULL(a.ReceiptPayPrice, 0)                                AS DocTotal,
+                    ISNULL(il.sap_doc_num, '')                                  AS ArSapDocNum,
+                    a.TranKey
+                FROM ordertransaction a
+                LEFT JOIN shop_data s  ON s.ShopID = a.ShopID
+                LEFT JOIN salemode sm  ON sm.SaleModeID = TRY_CAST(a.SaleMode AS INT)
+                LEFT JOIN interface_logs il
+                    ON il.pos_doc_no = a.ReceiptNumber
+                    AND il.interface_type = 'AR'
+                    AND il.status = 'SUCCESS'
+                    AND il.is_deleted = 0
+                WHERE a.TransactionStatusID = 2
+                  AND ISNULL(a.Deleted, 0) = 0
+                  AND a.SaleDate >= @DateFrom
+                  AND a.SaleDate <  @DateToExcl
+                  {branchClause}
+                  {arSuccessClause}
+                ORDER BY a.SaleDate, a.ReceiptNumber";
+            headParam = new { DateFrom = df, DateToExcl = dtExcl, BranchCode = branchCode };
+        }
+
+        var headCmd = new CommandDefinition(headSql, headParam, commandTimeout: 120);
+        var heads = (await _db.QueryAsync<dynamic>(headCmd)).ToList();
+        if (!heads.Any()) return new();
+
+        // ---------------------------------------------------------------- Payment detail SQL
+        var tranKeyCsv = string.Join(",", heads.Select(h => $"'{(string)h.TranKey}'").Distinct());
+
+        var payDetailSql = $@"
+            SELECT
+                opd.TranKey,
+                opd.PayTypeID,
+                ISNULL(p.PayTypeName, '')                                    AS PayTypeName,
+                ISNULL(glm.SapPayCategory, 'SKIP')                          AS SapPayCategory,
+                ISNULL(glm.SapGlAccount, '')                                AS SapGlAccount,
+                ISNULL(glm.SapPayTypeName, ISNULL(p.PayTypeName, ''))       AS SapPayTypeName,
+                opd.PayAmount,
+                ISNULL(opd.CreditCardNo, '')                                AS CreditCardNo,
+                ISNULL(opd.CCApproveCode, '')                               AS CCApproveCode,
+                ISNULL(opd.ExpireMonth, 0)                                  AS ExpireMonth,
+                ISNULL(opd.ExpireYear,  0)                                  AS ExpireYear,
+                ISNULL(opd.PayRemark, '')                                   AS PayRemark,
+                ISNULL(opd.VoucherNo, '')                                   AS VoucherNo
+            FROM orderpaydetail opd
+            JOIN paytype p ON p.PayTypeID = opd.PayTypeID
+            LEFT JOIN paytype_gl_mapping glm
+                ON glm.PayTypeID = opd.PayTypeID AND glm.IsActive = 1
+            WHERE opd.TranKey IN ({tranKeyCsv})
+            ORDER BY opd.TranKey, opd.PayDetailID";
+
+        var allPays = (await _db.QueryAsync<dynamic>(
+            new CommandDefinition(payDetailSql, commandTimeout: 120))).ToList();
+
+        var paysByKey = allPays
+            .GroupBy(p => (string)p.TranKey)
+            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+
+        // ---------------------------------------------------------------- Assemble DTOs
+        var results = new List<SapIncomingPaymentDto>();
+        foreach (var h in heads)
+        {
+            var docNum  = Str(h.PosDocNo);
+            var docDate = Str(h.DocDate);
+            var pays    = paysByKey.GetValueOrDefault((string)h.TranKey) ?? new List<dynamic>();
+
+            var cashRows  = pays.Where(p => (string)p.SapPayCategory == "CASH").ToList();
+            var trsfrRows = pays.Where(p => (string)p.SapPayCategory == "TRANSFER").ToList();
+            var ccRows    = pays.Where(p => (string)p.SapPayCategory == "CREDIT_CARD").ToList();
+
+            // TRANSFER reference = first non-empty CCApproveCode or PayRemark
+            var trsfrRef = trsfrRows
+                .Select(p => !string.IsNullOrEmpty((string)p.CCApproveCode)
+                    ? (string)p.CCApproveCode
+                    : (string)p.PayRemark)
+                .FirstOrDefault(r => !string.IsNullOrEmpty(r)) ?? "";
+
+            var dto = new SapIncomingPaymentDto
+            {
+                DocNum     = docNum,
+                DocDate    = docDate,
+                DocType    = "C",
+                CardCode   = Str(h.CardCode),
+                CardName   = Str(h.CardName),
+                POSID      = Str(h.PosId),
+
+                CashAcct   = cashRows.Select(p => (string)p.SapGlAccount).FirstOrDefault() ?? "",
+                CashSum    = cashRows.Aggregate(0m, (sum, p) => sum + Dec(p.PayAmount)),
+
+                TrsfrAcct  = trsfrRows.Select(p => (string)p.SapGlAccount).FirstOrDefault() ?? "",
+                TrsfrSum   = trsfrRows.Aggregate(0m, (sum, p) => sum + Dec(p.PayAmount)),
+                TrsfrDate  = docDate,
+                TrsfrRef   = trsfrRef,
+
+                PayNoDoc   = "N",
+                NoDocSum   = 0m,
+                DocCur     = "THB",
+                BranchCode = Str(h.BranchCode),
+                BranchName = Str(h.BranchName),
+                Channel    = Str(h.Channel),
+                Comments   = Str(h.Comments),
+
+                PaymentInvoices = new List<SapPaymentInvoiceLineDto>
+                {
+                    new()
+                    {
+                        DocNum      = docNum,
+                        LineNum     = 0,
+                        InvType     = 13,
+                        InvoiceNum  = Str(h.ArSapDocNum),
+                        Dcount      = 0,
+                        SumApplied  = Dec(h.DocTotal)
+                    }
+                },
+
+                paymentCreditCards = ccRows.Select((p, i) => new SapPaymentCreditCardDto
+                {
+                    DocNum         = docNum,
+                    LineNum        = i,
+                    CreditCard     = Str(p.SapPayTypeName),
+                    CreditAcct     = Str(p.SapGlAccount),
+                    CrCardNum      = Str(p.CreditCardNo),
+                    CardValid      = FormatCardExpiry(Convert.ToInt32(p.ExpireMonth), Convert.ToInt32(p.ExpireYear)),
+                    CreditCardBank = "",
+                    CreditSum      = Dec(p.PayAmount),
+                    VoucherNum     = !string.IsNullOrEmpty((string)p.CCApproveCode)
+                                        ? (string)p.CCApproveCode
+                                        : (string)p.VoucherNo
+                }).ToList()
+            };
+
+            results.Add(dto);
+        }
+
+        return results;
+    }
+
+    private static string FormatCardExpiry(int month, int year)
+    {
+        if (month == 0 || year == 0) return "";
+        var fullYear = year < 100 ? 2000 + year : year;
+        return $"{fullYear:D4}-{month:D2}-01";
+    }
+
     // ------------------------------------------------------------------ Mappers
 
     private static string Str(object? val) => val?.ToString() ?? string.Empty;

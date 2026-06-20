@@ -6,6 +6,7 @@ import MonitorPage from '@/pages/MonitorPage';
 import MonitorDetailPage from '@/pages/MonitorDetailPage';
 import ConfigPage from '@/pages/ConfigPage';
 import ImportPage from '@/pages/ImportPage';
+import GlMappingPage from '@/pages/GlMappingPage';
 import LoginPage from '@/pages/LoginPage';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -31,6 +32,7 @@ function App() {
           <Route path="/monitor" element={<MonitorPage />} />
           <Route path="/monitor/:id" element={<MonitorDetailPage />} />
           <Route path="/import" element={<ImportPage />} />
+          <Route path="/glmapping" element={<GlMappingPage />} />
           <Route path="/config" element={<ConfigPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/login" replace />} />

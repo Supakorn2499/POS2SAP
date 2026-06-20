@@ -85,9 +85,98 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
         var posData = scope.ServiceProvider.GetRequiredService<IPosDataService>();
 
         var docNoList = docNos?.ToList();
-        var config = await monitor.GetConfigDictAsync();
+        var config    = await monitor.GetConfigDictAsync();
         var batchSize = int.TryParse(config.GetValueOrDefault(gbVar.CfgImportBatchSize, "500"), out var bs) && bs > 0 ? bs : 500;
 
+        // Map interface type UI names to internal DB codes
+        var mappedInterfaceType = interfaceType?.Trim().ToUpper() switch
+        {
+            "ARINVOICE"        => "AR",
+            "INCOMINGPAYMENT"  => "AP",
+            "DELIVERY"         => "DL",
+            _ => interfaceType ?? "AR"
+        };
+
+        // ── Incoming Payment import path ─────────────────────────────────────────
+        if (mappedInterfaceType == "AP")
+        {
+            List<SapIncomingPaymentDto> payments;
+            try
+            {
+                payments = docNoList?.Count > 0
+                    ? await posData.GetPaymentsByDocNosAsync(docNoList)
+                    : await posData.GetPaymentsByFilterAsync(
+                        DateTime.Today.AddDays(-30), DateTime.Today, branchCode, batchSize);
+
+                if (!string.IsNullOrWhiteSpace(branchCode))
+                    payments = payments
+                        .Where(p => string.Equals(p.BranchCode, branchCode, StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "ImportPreview AP: failed to fetch POS payments");
+                return (0, 0, ex.Message);
+            }
+
+            var alreadyApSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                const string apExistSql = @"
+                    SELECT DISTINCT pos_doc_no FROM interface_logs
+                    WHERE interface_type = 'AP'
+                      AND status IN ('PENDING','PROCESSING','SUCCESS')
+                      AND is_deleted = 0";
+                using var dbConn = new Microsoft.Data.SqlClient.SqlConnection(gbVar.MainConstr);
+                await dbConn.OpenAsync();
+                alreadyApSet = new HashSet<string>(
+                    await dbConn.QueryAsync<string>(apExistSql),
+                    StringComparer.OrdinalIgnoreCase);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "ImportPreview AP: could not check existing AP logs");
+            }
+
+            int apImported = 0, apSkipped = 0;
+            string? apLastError = null;
+            foreach (var pay in payments)
+            {
+                if (alreadyApSet.Contains(pay.DocNum)) { apSkipped++; continue; }
+                try
+                {
+                    var posJson = JsonSerializer.Serialize(pay, JsonOpts);
+                    var log = new InterfaceLog
+                    {
+                        PosDocNo      = pay.DocNum,
+                        PosDocDate    = DateTime.TryParse(pay.DocDate, out var dd) ? dd : null,
+                        BranchCode    = pay.BranchCode,
+                        BranchName    = pay.BranchName,
+                        PosId         = pay.POSID,
+                        CardCode      = pay.CardCode,
+                        Channel       = pay.Channel,
+                        InterfaceType = "AP",
+                        DocTotal      = pay.CashSum + pay.TrsfrSum + pay.paymentCreditCards.Sum(c => c.CreditSum),
+                        PosData       = posJson,
+                        SapRequest    = null,
+                        Status        = gbVar.StatusPending,
+                    };
+                    await monitor.InsertLogAsync(log);
+                    apImported++;
+                    alreadyApSet.Add(pay.DocNum);
+                }
+                catch (Exception ex)
+                {
+                    apLastError = ex.Message;
+                    _logger.LogWarning(ex, "ImportPreview AP: skip {DocNum}", pay.DocNum);
+                }
+            }
+            _logger.LogInformation("ImportPreview AP: fetched={F} skipped={S} imported={I}",
+                payments.Count, apSkipped, apImported);
+            return (payments.Count, apImported, apLastError);
+        }
+
+        // ── AR Invoice import path (default) ─────────────────────────────────────
         List<SapArInvoiceHeadDto> bills;
         try
         {
@@ -95,49 +184,38 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
                 ? await posData.GetBillsByDocNosAsync(docNoList)
                 : await posData.GetPendingBillsAsync(batchSize);
 
-            // Filter by branch when specified — receipt numbers may not be globally unique
             if (!string.IsNullOrWhiteSpace(branchCode))
-                bills = bills.Where(b => string.Equals(b.BranchCode, branchCode, StringComparison.OrdinalIgnoreCase)).ToList();
+                bills = bills
+                    .Where(b => string.Equals(b.BranchCode, branchCode, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "ImportPreview: failed to fetch POS bills");
+            _logger.LogError(ex, "ImportPreview AR: failed to fetch POS bills");
             return (0, 0, ex.Message);
         }
 
         var existingDocs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         try
         {
-            var existSql = @"SELECT DISTINCT pos_doc_no + '|' + branch_code FROM interface_logs";
+            const string existSql = @"SELECT DISTINCT pos_doc_no + '|' + branch_code FROM interface_logs";
             using var dbConn = new Microsoft.Data.SqlClient.SqlConnection(gbVar.MainConstr);
             await dbConn.OpenAsync();
-            var existingKeys = await dbConn.QueryAsync<string>(existSql);
-            existingDocs = new HashSet<string>(existingKeys, StringComparer.OrdinalIgnoreCase);
+            existingDocs = new HashSet<string>(
+                await dbConn.QueryAsync<string>(existSql),
+                StringComparer.OrdinalIgnoreCase);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "ImportPreview: could not check existing logs, will import all and may create duplicates");
+            _logger.LogWarning(ex, "ImportPreview AR: could not check existing logs");
         }
-
-        // Map interface type UI names to internal DB codes
-        var mappedInterfaceType = interfaceType?.Trim().ToUpper() switch
-        {
-            "ARINVOICE" => "AR",
-            "INCOMINGPAYMENT" => "AP",
-            "DELIVERY" => "DL",
-            _ => interfaceType ?? "AR"
-        };
 
         int imported = 0, skipped = 0;
         string? lastError = null;
         foreach (var bill in bills)
         {
             var billKey = $"{bill.DocNum}|{bill.BranchCode}";
-            if (existingDocs.Contains(billKey))
-            {
-                skipped++;
-                continue;
-            }
+            if (existingDocs.Contains(billKey)) { skipped++; continue; }
 
             try
             {
@@ -164,11 +242,12 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
             catch (Exception ex)
             {
                 lastError = ex.Message;
-                _logger.LogWarning(ex, "ImportPreview: skip bill {DocNum}", bill.DocNum);
+                _logger.LogWarning(ex, "ImportPreview AR: skip bill {DocNum}", bill.DocNum);
             }
         }
 
-        _logger.LogInformation("ImportPreview: fetched={Fetched} skipped={Skipped} imported={Imported}", bills.Count, skipped, imported);
+        _logger.LogInformation("ImportPreview AR: fetched={Fetched} skipped={Skipped} imported={Imported}",
+            bills.Count, skipped, imported);
         return (bills.Count, imported, lastError);
     }
 
@@ -237,9 +316,22 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
 
     private async Task<(int Sent, int Failed)> RunBatchAsync(IServiceScope scope, List<string>? docNos = null)
     {
-        var monitor    = scope.ServiceProvider.GetRequiredService<IInterfaceMonitorService>();
-        var posData    = scope.ServiceProvider.GetRequiredService<IPosDataService>();
-        var sap        = scope.ServiceProvider.GetRequiredService<ISapArInvoiceService>();
+        // Step 1: AR Invoices
+        var (arSent, arFailed) = await RunArInvoiceBatchAsync(scope, docNos);
+
+        // Step 2: Incoming Payments (only receipts whose AR Invoice already succeeded)
+        var (apSent, apFailed) = await RunIncomingPaymentBatchAsync(scope, docNos);
+
+        _logger.LogInformation("Batch complete: AR sent={ArSent} failed={ArFailed} | AP sent={ApSent} failed={ApFailed}",
+            arSent, arFailed, apSent, apFailed);
+        return (arSent + apSent, arFailed + apFailed);
+    }
+
+    private async Task<(int Sent, int Failed)> RunArInvoiceBatchAsync(IServiceScope scope, List<string>? docNos = null)
+    {
+        var monitor = scope.ServiceProvider.GetRequiredService<IInterfaceMonitorService>();
+        var posData = scope.ServiceProvider.GetRequiredService<IPosDataService>();
+        var sap     = scope.ServiceProvider.GetRequiredService<ISapArInvoiceService>();
 
         var config = await monitor.GetConfigDictAsync();
         var maxRetry = int.TryParse(config.GetValueOrDefault(gbVar.CfgMaxRetryCount, "3"), out var mr) ? mr : 3;
@@ -321,7 +413,116 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
             }
         }
 
-        _logger.LogInformation("Batch complete: sent={Sent} failed={Failed}", sent, failed);
+        _logger.LogInformation("AR batch complete: sent={Sent} failed={Failed}", sent, failed);
+        return (sent, failed);
+    }
+
+    private async Task<(int Sent, int Failed)> RunIncomingPaymentBatchAsync(IServiceScope scope, List<string>? docNos = null)
+    {
+        var monitor = scope.ServiceProvider.GetRequiredService<IInterfaceMonitorService>();
+        var posData = scope.ServiceProvider.GetRequiredService<IPosDataService>();
+        var sapIp   = scope.ServiceProvider.GetRequiredService<ISapIncomingPaymentService>();
+
+        var config   = await monitor.GetConfigDictAsync("IncomingPayment");
+        var maxRetry = int.TryParse(config.GetValueOrDefault(gbVar.CfgMaxRetryCount, "3"), out var mr) ? mr : 3;
+
+        List<SapIncomingPaymentDto> payments;
+        try
+        {
+            payments = docNos is { Count: > 0 }
+                ? await posData.GetPaymentsByDocNosAsync(docNos)
+                : await posData.GetPendingPaymentsAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "AP batch: failed to fetch POS payments");
+            return (0, 0);
+        }
+
+        if (!payments.Any())
+        {
+            _logger.LogInformation("AP batch: no pending payments found");
+            return (0, 0);
+        }
+
+        int sent = 0, failed = 0;
+
+        foreach (var payment in payments)
+        {
+            var logId = string.Empty;
+            try
+            {
+                var existingQuery = new DTOs.Monitor.InterfaceLogQueryParams
+                {
+                    Search = payment.DocNum, PageSize = 5
+                };
+                var existing = (await monitor.GetListAsync(existingQuery))
+                    .Items.FirstOrDefault(x =>
+                        x.PosDocNo == payment.DocNum &&
+                        string.Equals(x.InterfaceType, "AP", StringComparison.OrdinalIgnoreCase));
+
+                // Skip records that are already successfully sent or currently in flight
+                if (existing?.Status == gbVar.StatusSuccess || existing?.Status == gbVar.StatusProcessing)
+                {
+                    _logger.LogDebug("AP batch skip {DocNum} — status={Status}", payment.DocNum, existing.Status);
+                    continue;
+                }
+
+                var requestJson = JsonSerializer.Serialize(payment, JsonOpts);
+
+                if (existing is null)
+                {
+                    var log = new InterfaceLog
+                    {
+                        PosDocNo      = payment.DocNum,
+                        PosDocDate    = DateTime.TryParse(payment.DocDate, out var d) ? d : null,
+                        BranchCode    = payment.BranchCode,
+                        BranchName    = payment.BranchName,
+                        PosId         = payment.POSID,
+                        CardCode      = payment.CardCode,
+                        Channel       = payment.Channel,
+                        InterfaceType = "AP",
+                        DocTotal      = payment.CashSum + payment.TrsfrSum +
+                                        payment.paymentCreditCards.Sum(c => c.CreditSum),
+                        PosData       = requestJson,
+                        SapRequest    = requestJson,
+                        Status        = gbVar.StatusProcessing
+                    };
+                    logId = await monitor.InsertLogAsync(log);
+                }
+                else
+                {
+                    logId = existing.Id;
+                    await monitor.UpdateStatusAsync(logId, gbVar.StatusProcessing);
+                    await monitor.UpdateSapRequestAsync(logId, requestJson);
+                }
+
+                var (success, sapDocNum, errorMsg, rawResponse) = await sapIp.PostIncomingPaymentAsync(payment);
+
+                if (success)
+                {
+                    await monitor.UpdateSapResponseAsync(logId, gbVar.StatusSuccess, sapDocNum, rawResponse, null);
+                    sent++;
+                }
+                else
+                {
+                    var detail       = await monitor.GetDetailAsync(logId);
+                    var currentRetry = detail?.RetryCount ?? 0;
+                    var newStatus    = (currentRetry + 1) >= maxRetry ? gbVar.StatusFailed : gbVar.StatusRetry;
+                    await monitor.UpdateSapResponseAsync(logId, newStatus, null, rawResponse, errorMsg);
+                    failed++;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "AP batch error processing payment {DocNum}", payment.DocNum);
+                if (!string.IsNullOrEmpty(logId))
+                    await monitor.UpdateSapResponseAsync(logId, gbVar.StatusFailed, null, null, ex.Message);
+                failed++;
+            }
+        }
+
+        _logger.LogInformation("AP batch complete: sent={Sent} failed={Failed}", sent, failed);
         return (sent, failed);
     }
 

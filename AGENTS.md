@@ -42,6 +42,7 @@ Controllers  →  Services (Interfaces/Implementations)  →  Dapper + SQL
                     ├─ IPosDataService       (read POS ordertransaction/orderdetail)
                     ├─ ISapArInvoiceService  (HTTP POST to SAP, retry 2s/4s/8s)
                     ├─ IInterfaceJobService  (BackgroundService — polls every N min; also manual trigger/retry/import)
+                    ⚠ Registered twice: `AddScoped<IInterfaceJobService>` (DI for controllers) + `AddHostedService<InterfaceJobService>` (scheduler). Two separate instances — do not expect shared in-memory state.
                     └─ IInterfaceMonitorService (dashboard, logs, config CRUD)
 ```
 
@@ -72,7 +73,8 @@ Auth: JWT bearer. Public routes: `/api/auth/login`, `/api/auth/refresh`, `/swagg
 - API calls go through [frontend/pos2sap-ui/src/services/apiClient.ts](frontend/pos2sap-ui/src/services/apiClient.ts) (baseURL `VITE_API_URL` env or `/api`, JWT from `localStorage['pos2sapToken']`). Don't instantiate raw `axios` elsewhere.
 - Server state uses TanStack Query; user feedback via `sonner` toasts.
 - DTO TS types in `src/types/` mirror backend DTO names (e.g. `LoginResultDto`). Files: `auth.ts`, `dashboard.ts`, `monitor.ts` (`InterfaceStatus` union, `PagedResult<T>`), `config.ts`, `import.ts`.
-- UI strings are Thai (`src/lib/i18n.ts` + `LanguageContext` in [frontend/pos2sap-ui/src/contexts/LanguageContext.tsx](frontend/pos2sap-ui/src/contexts/LanguageContext.tsx)); keep code identifiers and comments in English.
+- UI strings: `const { t } = useLanguage()` from [LanguageContext.tsx](frontend/pos2sap-ui/src/contexts/LanguageContext.tsx), then `t('key')`. Add new keys (both `en` and `th`) to [src/lib/i18n.ts](frontend/pos2sap-ui/src/lib/i18n.ts). Keep code identifiers and comments in English.
+- Import alias `@/` maps to `src/` (e.g., `@/components/StatusBadge`, `@/services/apiClient`); configured in [tsconfig.app.json](frontend/pos2sap-ui/tsconfig.app.json). Use it consistently.
 - TS uses some relaxed checks (`noUnusedLocals=false`, `noUnusedParameters=false`) plus `ignoreDeprecations: "6.0"`; keep it compiling with `npm run build`.
 
 ## Gotchas
@@ -90,6 +92,9 @@ Auth: JWT bearer. Public routes: `/api/auth/login`, `/api/auth/refresh`, `/swagg
 - **PosDataService SQL timeout**: Dapper queries against `HQ_FAMTIME` (shared POS DB) can exceed 30s on large datasets. Always use `commandTimeout: 120` in `CommandDefinition` for `PosDataService` queries. The default 30s timeout will cause intermittent failures during bulk send operations.
 - **`/api/interface/upload` is `[AllowAnonymous]`** (dev test endpoint in `InterfaceController`) — do not expose in production.
 - **`POST /api/monitor/simulate-statuses`** randomizes log statuses in DB — dev only, protected by vtec-user check. Never call in production.
+- **Frontend HTTP timeout is 30s** (`apiClient.ts`). Bulk trigger/import operations hit the 120s backend SQL timeout first, so the frontend may show a network error while the backend is still running. Increase `timeout` per-call or add polling for new bulk endpoints.
+- **Rate limiting is disabled**: `UseIpRateLimiting()` and all `AspNetCoreRateLimit` service registrations are commented out in `Program.cs`. Uncomment all related lines together to re-enable.
+- **`appsettings.Development.json` contains real DB credentials** (live SQL Server IP + credentials). Do not commit mutations to this file or leak it.
 
 ## API Endpoints Reference
 

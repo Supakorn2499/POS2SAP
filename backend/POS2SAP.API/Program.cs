@@ -76,12 +76,19 @@ builder.Services.AddScoped<IDbConnection>(_ => new SqlConnection(connectionStrin
 builder.Services.AddScoped<IInterfaceMonitorService, InterfaceMonitorService>();
 builder.Services.AddScoped<IPosDataService, PosDataService>();
 builder.Services.AddScoped<IInterfaceJobService, InterfaceJobService>();
+builder.Services.AddScoped<IGlMappingService, GlMappingService>();
 
 // ------------------------------------------------------------------ Services — Background Job
 builder.Services.AddHostedService<InterfaceJobService>();
 
-// ------------------------------------------------------------------ HttpClient — SAP
+// ------------------------------------------------------------------ HttpClient — SAP AR Invoice
 builder.Services.AddHttpClient<ISapArInvoiceService, SapArInvoiceService>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(30);
+});
+
+// ------------------------------------------------------------------ HttpClient — SAP Incoming Payment
+builder.Services.AddHttpClient<ISapIncomingPaymentService, SapIncomingPaymentService>(client =>
 {
     client.Timeout = TimeSpan.FromSeconds(30);
 });

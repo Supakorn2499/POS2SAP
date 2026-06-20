@@ -138,6 +138,30 @@ const translations: Record<string, { en: string; th: string }> = {
   'configLabel.sap_basic_password': { en: 'SAP Basic Auth Password', th: 'SAP Basic Auth Password' },
   'configLabel.schedule_interval_minutes': { en: 'Schedule interval (minutes)', th: 'ช่วงเวลา Schedule (นาที)' },
   'configLabel.schedule_enabled': { en: 'Schedule enabled (true / false)', th: 'เปิดใช้ Schedule (true / false)' },
+
+  // ── GL Mapping page ──────────────────────────────────────────────────────────
+  glMapping:              { en: 'GL Mapping', th: 'GL Mapping' },
+  glMappingTitle:         { en: 'Payment Type → GL Account Mapping', th: 'Mapping ประเภทชำระเงิน → GL บัญชี' },
+  glMappingSubtitle:      { en: 'Configure how each POS payment type maps to SAP Incoming Payment GL accounts', th: 'ตั้งค่าการ map ประเภทชำระเงินจาก POS ไปยัง GL บัญชีใน SAP' },
+  glMappingPayTypeID:     { en: 'Pay Type ID', th: 'Pay Type ID' },
+  glMappingPayTypeName:   { en: 'Payment Type', th: 'ประเภทชำระเงิน' },
+  glMappingCategory:      { en: 'SAP Category', th: 'ประเภท SAP' },
+  glMappingGlAccount:     { en: 'GL Account', th: 'GL Account' },
+  glMappingSapPayType:    { en: 'SAP Pay Type Name', th: 'ชื่อใน SAP' },
+  glMappingActive:        { en: 'Active', th: 'ใช้งาน' },
+  glMappingSortOrder:     { en: 'Order', th: 'ลำดับ' },
+  glMappingRemarks:       { en: 'Remarks', th: 'หมายเหตุ' },
+  glMappingUpdatedAt:     { en: 'Updated', th: 'อัปเดตล่าสุด' },
+  glMappingUnmapped:      { en: 'Unmapped POS Payment Types', th: 'ประเภทชำระเงินที่ยังไม่ได้ Map' },
+  glMappingAddRow:        { en: 'Add to mapping', th: 'เพิ่มใน Mapping' },
+  glMappingDelete:        { en: 'Remove mapping', th: 'ลบ Mapping' },
+  glMappingDeleteConfirm: { en: 'Remove mapping for "{name}"?', th: 'ต้องการลบ Mapping ของ "{name}" ใช่หรือไม่?' },
+  glMappingSaved:         { en: 'GL mapping saved', th: 'บันทึก GL Mapping แล้ว' },
+  glMappingDeleted:       { en: 'Mapping removed', th: 'ลบ Mapping แล้ว' },
+  glMappingCatCash:       { en: 'Cash', th: 'เงินสด' },
+  glMappingCatTransfer:   { en: 'Transfer', th: 'โอนเงิน' },
+  glMappingCatCreditCard: { en: 'Credit Card', th: 'บัตรเครดิต' },
+  glMappingCatSkip:       { en: 'Skip (do not send)', th: 'ไม่ส่ง SAP' },
 };
 
 export function getStoredLang(): Lang {

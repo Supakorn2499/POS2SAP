@@ -85,6 +85,43 @@ public class InterfaceController : ControllerBase
         _logger.LogInformation("PreviewImport: dateFrom={From} dateTo={To} branch={Branch} type={Type}",
             dateFrom, dateTo, request.BranchCode, dbInterfaceType);
 
+        // ── Incoming Payment: query payment data (requires paytype_gl_mapping table) ──
+        if (dbInterfaceType == "AP")
+        {
+            List<SapIncomingPaymentDto> payments;
+            try
+            {
+                payments = await _posData.GetPaymentsByFilterAsync(dateFrom, dateTo, request.BranchCode, batchSize);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "PreviewImport AP: failed to fetch from POS");
+                return StatusCode(500, ApiResponse<List<ImportPreviewItemDto>>.Fail("ดึงข้อมูล Incoming Payment จาก POS ไม่สำเร็จ: " + ex.Message));
+            }
+
+            if (!payments.Any())
+                return Ok(ApiResponse<List<ImportPreviewItemDto>>.Ok(new List<ImportPreviewItemDto>(), "ไม่พบข้อมูลใน POS ตามเงื่อนไขที่กำหนด"));
+
+            var payDocNos  = payments.Select(p => p.DocNum).ToList();
+            var alreadyAp  = await _monitor.GetImportedDocNosAsync(payDocNos, "AP");
+
+            var payResult = payments.Select(p => new ImportPreviewItemDto
+            {
+                DocNum          = p.DocNum,
+                DocDate         = p.DocDate,
+                BranchCode      = p.BranchCode,
+                BranchName      = p.BranchName,
+                Channel         = p.Channel,
+                DocTotal        = p.CashSum + p.TrsfrSum + p.paymentCreditCards.Sum(c => c.CreditSum),
+                AlreadyImported = alreadyAp.Contains(p.DocNum)
+            }).ToList();
+
+            var newPayCount = payResult.Count(r => !r.AlreadyImported);
+            return Ok(ApiResponse<List<ImportPreviewItemDto>>.Ok(payResult,
+                $"พบ {payResult.Count} รายการ ({newPayCount} รายการใหม่, {payResult.Count - newPayCount} นำเข้าแล้ว)"));
+        }
+
+        // ── AR Invoice (default) ──
         List<SapArInvoiceHeadDto> bills;
         try
         {
