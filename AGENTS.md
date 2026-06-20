@@ -3,6 +3,7 @@
 Background-job integration that reads POS transactions from `HQ_FAMTIME` (SQL Server), transforms them to SAP AR invoices, and posts to SAP via HTTP. Ships with a React monitoring/admin UI.
 
 Related docs:
+- [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md) — โครงสร้างโปรเจกต์และสถาปัตยกรรม
 - [SECURITY_PHASE1_SETUP.md](SECURITY_PHASE1_SETUP.md) — JWT/BCrypt/CORS/rate-limit setup details
 - [backend/POS2SAP.API/sql/SETUP_GUIDE.md](backend/POS2SAP.API/sql/SETUP_GUIDE.md) — DB init steps
 - [backend/POS2SAP.API/sql/init.sql](backend/POS2SAP.API/sql/init.sql) — schema source of truth
