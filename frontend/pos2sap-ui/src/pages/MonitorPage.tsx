@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import monitorService from '@/services/monitorService';
 import interfaceService from '@/services/interfaceService';
 import { StatusBadge } from '@/components/StatusBadge';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { fmtDate, fmtDatetime, fmt, todayStr, cn } from '@/lib/utils';
@@ -41,6 +42,13 @@ export default function MonitorPage() {
 
   const [triggering, setTriggering] = useState(false);
   const [simulating, setSimulating] = useState(false);
+  const [sendingId, setSendingId] = useState<string | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    docNo: string;
+    interfaceType: string;
+  }>({ isOpen: false, docNo: '', interfaceType: '' });
+  const [triggerConfirmOpen, setTriggerConfirmOpen] = useState(false);
 
   const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ['monitor-logs', params],
@@ -72,7 +80,10 @@ export default function MonitorPage() {
     setParams(newParams);
 
     // Ensure we fetch using the exact params selected (avoid any stale query key timing)
-    void queryClient.fetchQuery(['monitor-logs', newParams], () => monitorService.getLogs(newParams)).catch((err) => {
+    void queryClient.fetchQuery({
+      queryKey: ['monitor-logs', newParams],
+      queryFn: () => monitorService.getLogs(newParams),
+    }).catch((err) => {
       // swallow - UI will show errors elsewhere
       console.error('fetchQuery failed', err);
     });
@@ -85,6 +96,11 @@ export default function MonitorPage() {
   }
 
   async function handleTrigger() {
+    setTriggerConfirmOpen(true);
+  }
+
+  async function handleConfirmTrigger() {
+    setTriggerConfirmOpen(false);
     setTriggering(true);
     try {
       const result = await interfaceService.triggerManualFor(pendingInterface);
@@ -121,8 +137,57 @@ export default function MonitorPage() {
     }
   }
 
+  async function handleSend(posDocNo: string, interfaceType: string, e: React.MouseEvent) {
+    e.stopPropagation();
+    setConfirmDialog({ isOpen: true, docNo: posDocNo, interfaceType });
+  }
+
+  async function handleConfirmSend() {
+    setSendingId(confirmDialog.docNo);
+    try {
+      const result = await interfaceService.triggerManualFor(
+        confirmDialog.interfaceType,
+        [confirmDialog.docNo]
+      );
+      toast.success(`ส่งสำเร็จ ${result.sent} รายการ`);
+      refetch();
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'เกิดข้อผิดพลาดในการส่ง');
+    } finally {
+      setSendingId(null);
+      setConfirmDialog({ isOpen: false, docNo: '', interfaceType: '' });
+    }
+  }
+
+  function handleCancelSend() {
+    setConfirmDialog({ isOpen: false, docNo: '', interfaceType: '' });
+  }
+
   return (
     <div className="space-y-4">
+      {/* Confirm Dialog — Send single record */}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        title="ยืนยันการส่ง"
+        message={`คุณต้องการส่ง ${confirmDialog.docNo} ไปที่ SAP ใช่หรือไม่?`}
+        confirmText="ส่ง"
+        cancelText="ยกเลิก"
+        isLoading={sendingId === confirmDialog.docNo}
+        onConfirm={handleConfirmSend}
+        onCancel={handleCancelSend}
+      />
+      {/* Confirm Dialog — Trigger All */}
+      <ConfirmDialog
+        isOpen={triggerConfirmOpen}
+        title="ยืนยัน Trigger All"
+        message={`ต้องการส่งรายการ PENDING/RETRY ทั้งหมด (${pendingInterface}) ไปยัง SAP ใช่หรือไม่?`}
+        confirmText="ยืนยัน"
+        cancelText="ยกเลิก"
+        isLoading={triggering}
+        onConfirm={handleConfirmTrigger}
+        onCancel={() => setTriggerConfirmOpen(false)}
+      />
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -251,12 +316,22 @@ export default function MonitorPage() {
                   <td className="px-4 py-2 text-center text-xs">{r.retryCount}</td>
                   <td className="px-4 py-2 text-xs text-muted-foreground">{fmtDatetime(r.sentAt)}</td>
                   <td className="px-4 py-2" onClick={(e) => e.stopPropagation()}>
-                    {(r.status === 'FAILED' || r.status === 'RETRY') && (
+                    {(r.status === 'PENDING' || r.status === 'FAILED' || r.status === 'RETRY' || r.status === 'PROCESSING') && (
                       <button
-                        onClick={(e) => handleRetry(r.id, e)}
-                        className="flex items-center gap-1 rounded px-2 py-1 text-xs bg-orange-50 text-orange-700 hover:bg-orange-100"
+                        onClick={(e) => handleSend(r.posDocNo, params.interfaceType || 'ARInvoice', e)}
+                        disabled={sendingId === r.posDocNo}
+                        className="flex items-center gap-1 rounded px-2 py-1 text-xs bg-blue-50 text-blue-700 hover:bg-blue-100 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
-                        <RefreshCw className="h-3 w-3" /> {t('retry')}
+                        {sendingId === r.posDocNo ? (
+                          <>
+                            <div className="h-3 w-3 border-2 border-blue-700 border-t-transparent rounded-full animate-spin" />
+                            กำลังส่ง...
+                          </>
+                        ) : (
+                          <>
+                            <Play className="h-3 w-3" /> {t('send')}
+                          </>
+                        )}
                       </button>
                     )}
                   </td>

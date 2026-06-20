@@ -247,6 +247,60 @@ public class InterfaceMonitorService : IInterfaceMonitorService
             new { Statuses = deleteStatuses });
     }
 
+    public async Task<bool> SoftDeleteLogAsync(string id)
+    {
+        var sql = @"
+            UPDATE interface_logs
+            SET is_deleted = 1, updated_at = GETUTCDATE()
+            WHERE id = @Id
+              AND is_deleted = 0
+              AND status IN ('PENDING', 'FAILED', 'RETRY')";
+        var rows = await _db.ExecuteAsync(sql, new { Id = id });
+        return rows > 0;
+    }
+
+    public async Task<int> ResetStuckProcessingAsync(int olderThanMinutes = 10)
+    {
+        var sql = @"
+            UPDATE interface_logs
+            SET status        = @Status,
+                error_message = @ErrorMessage,
+                updated_at    = @UpdatedAt
+            WHERE status = 'PROCESSING'
+              AND updated_at < DATEADD(MINUTE, @MinutesAgo, GETUTCDATE())";
+
+        var count = await _db.ExecuteAsync(sql, new
+        {
+            Status       = gbVar.StatusFailed,
+            ErrorMessage = "Reset from stuck PROCESSING state on service startup",
+            UpdatedAt    = DateTime.UtcNow,
+            MinutesAgo   = -olderThanMinutes
+        });
+        return count;
+    }
+
+    public async Task<HashSet<string>> GetImportedDocNosAsync(IEnumerable<string> docNos, string? interfaceType = null)
+    {
+        var docNoList = docNos.ToList();
+        if (!docNoList.Any()) return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        string sql;
+        object param;
+        if (!string.IsNullOrWhiteSpace(interfaceType))
+        {
+            sql   = "SELECT DISTINCT pos_doc_no FROM interface_logs WHERE pos_doc_no IN @DocNos AND interface_type = @InterfaceType AND is_deleted = 0";
+            param = new { DocNos = docNoList, InterfaceType = interfaceType };
+        }
+        else
+        {
+            sql   = "SELECT DISTINCT pos_doc_no FROM interface_logs WHERE pos_doc_no IN @DocNos AND is_deleted = 0";
+            param = new { DocNos = docNoList };
+        }
+
+        var result = await _db.QueryAsync<string>(sql, param);
+        return new HashSet<string>(result, StringComparer.OrdinalIgnoreCase);
+    }
+
     // ------------------------------------------------------------------ Dashboard
 
     public async Task<DashboardSummaryDto> GetDashboardAsync(int monthOffset = 0, string? interfaceType = null)
@@ -405,14 +459,11 @@ public class InterfaceMonitorService : IInterfaceMonitorService
     public async Task<List<BranchOptionDto>> GetBranchesAsync()
     {
         var sql = @"
-            SELECT DISTINCT
-                l.branch_code AS BranchCode,
-                COALESCE(sd.shopname, l.branch_name) AS BranchName
-            FROM interface_logs l
-            LEFT JOIN shop_data sd ON sd.shopcode = l.branch_code
-            WHERE l.is_deleted = 0
-              AND l.branch_code IS NOT NULL
-            ORDER BY COALESCE(sd.shopname, l.branch_name)";
+            SELECT
+                ISNULL(NULLIF(sd.PTTShopCode, ''), sd.shopcode) AS BranchCode,
+                sd.shopname                                     AS BranchName
+            FROM shop_data sd
+            ORDER BY sd.shopname";
 
         return (await _db.QueryAsync<BranchOptionDto>(sql)).ToList();
     }

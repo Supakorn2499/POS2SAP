@@ -2,12 +2,13 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, RefreshCw, CheckCircle, Clock, Activity, XCircle } from 'lucide-react';
+import { ArrowLeft, RefreshCw, CheckCircle, Clock, Activity, XCircle, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import monitorService from '@/services/monitorService';
 import interfaceService from '@/services/interfaceService';
 import { StatusBadge } from '@/components/StatusBadge';
 import { JsonViewer } from '@/components/JsonViewer';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { fmtDate, fmtDatetime, fmt, cn } from '@/lib/utils';
 
@@ -28,6 +29,8 @@ export default function MonitorDetailPage() {
   const navigate = useNavigate();
   const [tab, setTab] = useState<Tab>('request');
   const [retrying, setRetrying] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['monitor-detail', id],
@@ -50,14 +53,40 @@ export default function MonitorDetailPage() {
     }
   }
 
+  async function handleDelete() {
+    if (!id) return;
+    setDeleting(true);
+    try {
+      await monitorService.deleteLog(id);
+      toast.success(t('deleteLogSuccess'));
+      navigate('/monitor');
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : t('deleteLogError'));
+    } finally {
+      setDeleting(false);
+      setDeleteOpen(false);
+    }
+  }
+
   if (isLoading) return <div className="p-8 text-sm text-muted-foreground">{t('loading')}</div>;
   if (isError || !data) return <div className="p-8 text-sm text-destructive">{t('noData')}</div>;
 
   const canRetry = data.status === 'FAILED' || data.status === 'RETRY';
+  const canDelete = ['PENDING', 'FAILED', 'RETRY'].includes(data.status);
   const reachedIndex = statusOrder.indexOf(data.status as typeof statusOrder[number]);
 
   return (
     <div className="space-y-6">
+      <ConfirmDialog
+        isOpen={deleteOpen}
+        title={t('deleteLogConfirmTitle')}
+        message={t('deleteLogConfirmMsg')}
+        confirmText={deleting ? t('deleting') : t('deleteLog')}
+        cancelText={t('clearButton')}
+        isLoading={deleting}
+        onConfirm={handleDelete}
+        onCancel={() => setDeleteOpen(false)}
+      />
       {/* Header */}
       <div className="flex items-center gap-3">
         <button onClick={() => navigate('/monitor')}
@@ -68,6 +97,16 @@ export default function MonitorDetailPage() {
           <h1 className="text-xl font-bold">{t('detailTitle')}: {data.posDocNo}</h1>
           <p className="text-sm text-muted-foreground">{t('detailId')}: {data.id}</p>
         </div>
+        {canDelete && (
+          <button
+            onClick={() => setDeleteOpen(true)}
+            disabled={deleting}
+            className="flex items-center gap-2 rounded-lg border border-destructive px-4 py-2 text-sm font-medium text-destructive hover:bg-destructive hover:text-white disabled:opacity-50"
+          >
+            <Trash2 className="h-4 w-4" />
+            {t('deleteLog')}
+          </button>
+        )}
         {canRetry && (
           <button
             onClick={handleRetry}

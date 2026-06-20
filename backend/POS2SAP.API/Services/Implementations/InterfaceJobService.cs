@@ -26,6 +26,20 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
     {
         _logger.LogInformation("InterfaceJobService started");
 
+        // Reset any records stuck in PROCESSING from a previous crash
+        try
+        {
+            using var startupScope = _scopeFactory.CreateScope();
+            var startupMonitor = startupScope.ServiceProvider.GetRequiredService<IInterfaceMonitorService>();
+            var resetCount = await startupMonitor.ResetStuckProcessingAsync(olderThanMinutes: 10);
+            if (resetCount > 0)
+                _logger.LogWarning("Reset {Count} stuck PROCESSING record(s) to FAILED on startup", resetCount);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to reset stuck PROCESSING records on startup");
+        }
+
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -64,7 +78,7 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
         return await RunBatchAsync(scope, docNos?.ToList());
     }
 
-    public async Task<(int Fetched, int Imported, string? Error)> ImportPreviewAsync(IEnumerable<string>? docNos = null, string? interfaceType = null)
+    public async Task<(int Fetched, int Imported, string? Error)> ImportPreviewAsync(IEnumerable<string>? docNos = null, string? interfaceType = null, string? branchCode = null)
     {
         using var scope = _scopeFactory.CreateScope();
         var monitor = scope.ServiceProvider.GetRequiredService<IInterfaceMonitorService>();
@@ -80,6 +94,10 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
             bills = docNoList?.Count > 0
                 ? await posData.GetBillsByDocNosAsync(docNoList)
                 : await posData.GetPendingBillsAsync(batchSize);
+
+            // Filter by branch when specified — receipt numbers may not be globally unique
+            if (!string.IsNullOrWhiteSpace(branchCode))
+                bills = bills.Where(b => string.Equals(b.BranchCode, branchCode, StringComparison.OrdinalIgnoreCase)).ToList();
         }
         catch (Exception ex)
         {
@@ -92,6 +110,7 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
         {
             var existSql = @"SELECT DISTINCT pos_doc_no + '|' + branch_code FROM interface_logs";
             using var dbConn = new Microsoft.Data.SqlClient.SqlConnection(gbVar.MainConstr);
+            await dbConn.OpenAsync();
             var existingKeys = await dbConn.QueryAsync<string>(existSql);
             existingDocs = new HashSet<string>(existingKeys, StringComparer.OrdinalIgnoreCase);
         }
@@ -99,6 +118,15 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
         {
             _logger.LogWarning(ex, "ImportPreview: could not check existing logs, will import all and may create duplicates");
         }
+
+        // Map interface type UI names to internal DB codes
+        var mappedInterfaceType = interfaceType?.Trim().ToUpper() switch
+        {
+            "ARINVOICE" => "AR",
+            "INCOMINGPAYMENT" => "AP",
+            "DELIVERY" => "DL",
+            _ => interfaceType ?? "AR"
+        };
 
         int imported = 0, skipped = 0;
         string? lastError = null;
@@ -127,7 +155,7 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
                     PosData       = posJson,
                     SapRequest    = null,
                     Status        = gbVar.StatusPending,
-                    InterfaceType = "AR"
+                    InterfaceType = mappedInterfaceType
                 };
                 await monitor.InsertLogAsync(log);
                 imported++;
@@ -157,7 +185,7 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
             return false;
         }
 
-        if (detail.Status != gbVar.StatusFailed && detail.Status != gbVar.StatusRetry)
+        if (detail.Status != gbVar.StatusFailed && detail.Status != gbVar.StatusRetry && detail.Status != gbVar.StatusProcessing)
         {
             _logger.LogWarning("RetryAsync failed for Log ID {LogId}: Status is '{Status}', not FAILED or RETRY.", logId, detail.Status);
             return false;

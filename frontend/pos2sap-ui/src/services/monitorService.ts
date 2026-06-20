@@ -22,6 +22,10 @@ const monitorService = {
     const res = await apiClient.post('/monitor/simulate-statuses', {});
     return res.data.data;
   },
+
+  async deleteLog(id: string): Promise<void> {
+    await apiClient.delete(`/monitor/logs/${id}`);
+  },
 };
 
 export default monitorService;

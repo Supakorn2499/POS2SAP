@@ -70,4 +70,14 @@ public class MonitorController : ControllerBase
         var message = $"Simulated {count} logs with random statuses.";
         return Ok(ApiResponse<string>.Ok(message));
     }
+
+    /// <summary>Soft-delete a log by ID — allowed only for PENDING, FAILED, RETRY</summary>
+    [HttpDelete("logs/{id}")]
+    public async Task<ActionResult<ApiResponse<bool>>> DeleteLog(string id)
+    {
+        var deleted = await _monitor.SoftDeleteLogAsync(id);
+        if (!deleted)
+            return BadRequest(ApiResponse<bool>.Fail("ลบไม่ได้ — record ไม่พบ หรือ status เป็น SUCCESS/PROCESSING"));
+        return Ok(ApiResponse<bool>.Ok(true, "ลบ record เรียบร้อยแล้ว"));
+    }
 }

@@ -16,7 +16,8 @@ public class SapArInvoiceService : ISapArInvoiceService
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNamingPolicy = null,
-        WriteIndented = false
+        WriteIndented = false,
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.Never
     };
 
     public SapArInvoiceService(
@@ -39,6 +40,7 @@ public class SapArInvoiceService : ISapArInvoiceService
         SetAuthHeader(config);
 
         var json = JsonSerializer.Serialize(invoices, JsonOpts);
+        _logger.LogInformation("SAP Request Payload for {DocNum}: {Payload}", docNumForLogging, json);
         var content = new StringContent(json, Encoding.UTF8, "application/json");
 
         int maxRetry = int.TryParse(config.GetValueOrDefault(gbVar.CfgMaxRetryCount, "3"), out var mr) ? mr : 3;
@@ -55,7 +57,17 @@ public class SapArInvoiceService : ISapArInvoiceService
 
                 if (response.IsSuccessStatusCode)
                 {
-                    string? sapDocNum = ExtractSapDocNum(raw);
+                    var (bodySuccess, sapDocNum, bodyErrMsg) = ParseSapResponseBody(raw);
+                    if (!bodySuccess)
+                    {
+                        _logger.LogWarning("SAP returned HTTP 200 but Status=Failed for DocNum={DocNum}: {ErrMsg}", docNumForLogging, bodyErrMsg);
+                        if (attempt < maxRetry)
+                        {
+                            await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, attempt)));
+                            continue;
+                        }
+                        return (false, null, bodyErrMsg ?? "SAP returned Status=Failed", raw);
+                    }
                     _logger.LogInformation("SAP success DocNum={DocNum} SapDocNum={SapDocNum}", docNumForLogging, sapDocNum);
                     return (true, sapDocNum, null, raw);
                 }
@@ -94,6 +106,7 @@ public class SapArInvoiceService : ISapArInvoiceService
     {
         var authType = config.GetValueOrDefault(gbVar.CfgSapAuthType, "None");
         _httpClient.DefaultRequestHeaders.Authorization = null;
+        _httpClient.DefaultRequestHeaders.Remove("X-API-Key");
 
         if (authType == "ApiKey")
         {
@@ -113,35 +126,56 @@ public class SapArInvoiceService : ISapArInvoiceService
         }
     }
 
-    private static string? ExtractSapDocNum(string raw)
+    private static (bool IsSuccess, string? SapDocNum, string? ErrMsg) ParseSapResponseBody(string raw)
     {
         try
         {
-            // The response might be an array, a single object, or a nested object.
             using var doc = JsonDocument.Parse(raw);
             var root = doc.RootElement;
 
-            // Case 1: Response is a JSON array `[{"DocNum": "123"}]`
+            // Response may be array — take first element
             if (root.ValueKind == JsonValueKind.Array && root.GetArrayLength() > 0)
-            {
                 root = root[0];
+
+            if (root.ValueKind != JsonValueKind.Object)
+                return (true, null, null); // non-JSON body treated as success (HTTP already 200)
+
+            // Check Status field (case-insensitive fallback via both casings)
+            string? status = null;
+            if (root.TryGetProperty("Status", out var sv)) status = sv.GetString();
+            else if (root.TryGetProperty("status", out var sv2)) status = sv2.GetString();
+
+            bool isSuccess = !string.Equals(status, "Failed", StringComparison.OrdinalIgnoreCase);
+
+            // Extract SAP document number from SAPDocNum
+            string? sapDocNum = null;
+            if (root.TryGetProperty("SAPDocNum", out var sdv))
+            {
+                sapDocNum = sdv.ValueKind == JsonValueKind.Number
+                    ? sdv.GetRawText()
+                    : sdv.GetString();
+            }
+            else if (root.TryGetProperty("sapDocNum", out var sdv2))
+            {
+                sapDocNum = sdv2.ValueKind == JsonValueKind.Number
+                    ? sdv2.GetRawText()
+                    : sdv2.GetString();
             }
 
-            // Case 2: Response is an object `{"DocNum": "123"}` (or the first element from array)
-            if (root.TryGetProperty("DocNum", out var v)) return v.GetString();
-            if (root.TryGetProperty("docNum", out var v2)) return v2.GetString();
-            
-            // Case 3: Response is nested `{"data": {"DocNum": "123"}}`
-            if (root.TryGetProperty("data", out var data))
+            // Extract error message
+            string? errMsg = null;
+            if (!isSuccess)
             {
-                if (data.TryGetProperty("DocNum", out var dv)) return dv.GetString();
+                if (root.TryGetProperty("errMsg", out var em)) errMsg = em.GetString();
+                else if (root.TryGetProperty("ErrMsg", out var em2)) errMsg = em2.GetString();
+                else if (root.TryGetProperty("message", out var em3)) errMsg = em3.GetString();
             }
+
+            return (isSuccess, sapDocNum, errMsg);
         }
-        catch(Exception e) 
-        { 
-            /* raw is not JSON or unexpected shape */
-            Console.WriteLine($"Error parsing SAP response: {e.Message}");
+        catch
+        {
+            return (true, null, null); // non-parseable body — let HTTP status decide
         }
-        return null;
     }
 }

@@ -1,14 +1,15 @@
 // src/components/layout/AppLayout.tsx
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, ListFilter, Settings, LogOut } from 'lucide-react';
+import { LayoutDashboard, ListFilter, Settings, LogOut, FolderInput } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useAuth } from '@/contexts/AuthContext';
 
 const navItems = [
-  { to: '/dashboard', labelKey: 'dashboard', icon: LayoutDashboard, end: true },
-  { to: '/monitor', labelKey: 'monitor', icon: ListFilter, end: false },
-  { to: '/config', labelKey: 'config', icon: Settings, end: true },
+  { to: '/dashboard', labelKey: 'dashboard',        icon: LayoutDashboard, end: true  },
+  { to: '/monitor',   labelKey: 'monitor',           icon: ListFilter,      end: false },
+  { to: '/import',    labelKey: 'importSidebarLabel', icon: FolderInput,     end: true  },
+  { to: '/config',    labelKey: 'config',            icon: Settings,        end: true  },
 ];
 
 export function AppLayout() {

@@ -9,4 +9,7 @@ public interface IPosDataService
 
     /// <summary>ดึง POS bill เฉพาะ doc numbers ที่ระบุ</summary>
     Task<List<SapArInvoiceHeadDto>> GetBillsByDocNosAsync(IEnumerable<string> docNos);
+
+    /// <summary>ดึง POS bills ตามช่วงวันที่ สาขา (optional) สำหรับหน้า Import Preview</summary>
+    Task<List<SapArInvoiceHeadDto>> GetBillsByFilterAsync(DateTime dateFrom, DateTime dateTo, string? branchCode, int batchSize = 500);
 }

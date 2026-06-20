@@ -18,12 +18,14 @@ public class InterfaceController : ControllerBase
     private readonly IInterfaceJobService _job;
     private readonly ILogger<InterfaceController> _logger;
     private readonly IInterfaceMonitorService _monitor;
+    private readonly IPosDataService _posData;
 
-    public InterfaceController(IInterfaceJobService job, IInterfaceMonitorService monitor, ILogger<InterfaceController> logger)
+    public InterfaceController(IInterfaceJobService job, IInterfaceMonitorService monitor, IPosDataService posData, ILogger<InterfaceController> logger)
     {
-        _job    = job;
+        _job     = job;
         _monitor = monitor;
-        _logger = logger;
+        _posData = posData;
+        _logger  = logger;
     }
 
     /// <summary>Manual trigger — send all PENDING/RETRY or specific docNos</summary>
@@ -51,13 +53,69 @@ public class InterfaceController : ControllerBase
     [HttpPost("import")]
     public async Task<ActionResult<ApiResponse<ImportResultDto>>> Import([FromBody] TriggerRequestDto? request)
     {
-        _logger.LogInformation("Import preview requested, docNos={Count}", request?.DocNos?.Count ?? 0);
-        var (fetched, imported, error) = await _job.ImportPreviewAsync(request?.DocNos, request?.InterfaceType);
+        _logger.LogInformation("Import preview requested, docNos={Count} branch={Branch}", request?.DocNos?.Count ?? 0, request?.BranchCode);
+        var (fetched, imported, error) = await _job.ImportPreviewAsync(request?.DocNos, request?.InterfaceType, request?.BranchCode);
         var result = new ImportResultDto { Fetched = fetched, Imported = imported, Error = error };
         var msg = fetched == 0
             ? "ไม่พบข้อมูลใหม่จาก POS (อาจถูก import ไปแล้วทั้งหมด)"
             : $"พบ {fetched} รายการ — import สำเร็จ {imported} รายการ สถานะ PENDING";
         return Ok(ApiResponse<ImportResultDto>.Ok(result, msg));
+    }
+
+    /// <summary>Preview POS bills by date range / branch before importing</summary>
+    [HttpPost("preview")]
+    public async Task<ActionResult<ApiResponse<List<ImportPreviewItemDto>>>> PreviewImport([FromBody] ImportPreviewRequestDto request)
+    {
+        if (!DateTime.TryParse(request.DateFrom, out var dateFrom))
+            return BadRequest(ApiResponse<List<ImportPreviewItemDto>>.Fail("DateFrom ไม่ถูกต้อง (ใช้รูปแบบ yyyy-MM-dd)"));
+        if (!DateTime.TryParse(request.DateTo, out var dateTo))
+            return BadRequest(ApiResponse<List<ImportPreviewItemDto>>.Fail("DateTo ไม่ถูกต้อง (ใช้รูปแบบ yyyy-MM-dd)"));
+        if (dateFrom > dateTo)
+            return BadRequest(ApiResponse<List<ImportPreviewItemDto>>.Fail("DateFrom ต้องไม่มากกว่า DateTo"));
+
+        var batchSize = Math.Clamp(request.BatchSize <= 0 ? 500 : request.BatchSize, 1, 1000);
+        var dbInterfaceType = request.InterfaceType.Trim().ToUpper() switch
+        {
+            "ARINVOICE"        => "AR",
+            "INCOMINGPAYMENT"  => "AP",
+            "DELIVERY"         => "DL",
+            _                  => "AR"
+        };
+
+        _logger.LogInformation("PreviewImport: dateFrom={From} dateTo={To} branch={Branch} type={Type}",
+            dateFrom, dateTo, request.BranchCode, dbInterfaceType);
+
+        List<SapArInvoiceHeadDto> bills;
+        try
+        {
+            bills = await _posData.GetBillsByFilterAsync(dateFrom, dateTo, request.BranchCode, batchSize);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "PreviewImport: failed to fetch from POS");
+            return StatusCode(500, ApiResponse<List<ImportPreviewItemDto>>.Fail("ดึงข้อมูลจาก POS ไม่สำเร็จ: " + ex.Message));
+        }
+
+        if (!bills.Any())
+            return Ok(ApiResponse<List<ImportPreviewItemDto>>.Ok(new List<ImportPreviewItemDto>(), "ไม่พบข้อมูลใน POS ตามเงื่อนไขที่กำหนด"));
+
+        var docNos = bills.Select(b => b.DocNum).ToList();
+        var alreadyImported = await _monitor.GetImportedDocNosAsync(docNos, dbInterfaceType);
+
+        var result = bills.Select(b => new ImportPreviewItemDto
+        {
+            DocNum          = b.DocNum,
+            DocDate         = b.DocDate,
+            BranchCode      = b.BranchCode,
+            BranchName      = b.BranchName,
+            Channel         = b.Channel,
+            DocTotal        = b.DocTotal,
+            AlreadyImported = alreadyImported.Contains(b.DocNum)
+        }).ToList();
+
+        var newCount = result.Count(r => !r.AlreadyImported);
+        return Ok(ApiResponse<List<ImportPreviewItemDto>>.Ok(result,
+            $"พบ {result.Count} รายการ ({newCount} รายการใหม่, {result.Count - newCount} นำเข้าแล้ว)"));
     }
 
     /// <summary>Resend multiple records based on their SapArInvoiceHeadDto data</summary>
@@ -146,6 +204,7 @@ public class TriggerRequestDto
 {
     public List<string>? DocNos { get; set; }
     public string? InterfaceType { get; set; }
+    public string? BranchCode { get; set; }
 }
 
 public class TriggerResultDto
