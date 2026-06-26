@@ -53,7 +53,7 @@ Frontend pages: `LoginPage`, `DashboardPage`, `MonitorPage`, `MonitorDetailPage`
 Frontend services: `apiClient.ts`, `loginService.ts`, `dashboardService.ts`, `monitorService.ts`, `interfaceService.ts`, `configService.ts`.  
 Frontend components: `ConfirmDialog` (modal), `JsonViewer` (pretty-print JSON), `StatusBadge` (color-coded status), `StatCard` (dashboard tile), `layout/AppLayout` (nav/header wrapper).
 
-Job flow: scheduler → fetch pending POS docs → map to `SapArInvoiceRequestDto` → POST SAP → write full audit to `interface_logs` (status `PENDING`/`PROCESSING`/`SUCCESS`/`FAILED`/`RETRY`).
+Job flow: scheduler (within time window) → **import** POS → **send** AR → import AP → send AP → import DL → send DL (drain loop per wake-up) → audit in `interface_logs`. Manual `/api/interface/import` and `/api/interface/trigger` remain independent.
 
 **Middleware order** (Program.cs): SerilogRequest → Swagger (dev) → CORS → `JwtAuthMiddleware` → `AuthorizationMiddleware` → `UseAuthentication` → `UseAuthorization` → MapControllers.
 
@@ -85,16 +85,22 @@ Auth: JWT bearer. Public routes: `/api/auth/login`, `/api/auth/refresh`, `/swagg
 - **SAP credentials are config rows, not appsettings**: `sap_url_test`, `sap_api_key`, `sap_auth_type`, etc. must exist in `interface_configs` or SAP posts fail.
 - **CORS is an explicit whitelist** in `appsettings.json → AllowedOrigins`. Add new frontend origins there.
 - **Background job toggle**: config row `schedule_enabled` — if `"false"`, only manual `/api/interface/trigger` works.
+- **Schedule window**: `schedule_window_start` / `schedule_window_end` (e.g. `20:00`–`06:00`, timezone `schedule_timezone`). Empty start = always on.
+- **Cutover date**: `interface_cutover_date` — POS data before this date is never imported (manual preview clamped too). `import_date_to_mode`: `yesterday` (default) or `today`.
+- **Drain loop**: each wake-up runs import→send AR→AP→DL cycles until idle or `schedule_max_runtime_minutes` (default 240).
+- **Performance**: `import_chunk_days` splits wide date-range POS queries; `sap_http_timeout_seconds` (default 90) per SAP call; optional indexes in [backend/POS2SAP.API/sql/perf_indexes.sql](backend/POS2SAP.API/sql/perf_indexes.sql) (DBA review before run).
 - **Legacy SHA1 password path** still exists in [backend/POS2SAP.API/Controllers/AuthController.cs](backend/POS2SAP.API/Controllers/AuthController.cs) for transition; new passwords must be BCrypt (workFactor=11).
 - **Vite dev proxy** means calling `/api/...` works in dev without CORS; production build must be served same-origin or `AllowedOrigins` updated.
 - **Frontend auth storage keys** are `pos2sapAuth`, `pos2sapToken`, `pos2sapUser` in [frontend/pos2sap-ui/src/contexts/AuthContext.tsx](frontend/pos2sap-ui/src/contexts/AuthContext.tsx); keep key names consistent or auth state breaks.
 - **TypeScript config is intentionally mixed-strictness** in [frontend/pos2sap-ui/tsconfig.app.json](frontend/pos2sap-ui/tsconfig.app.json) (includes `ignoreDeprecations: "6.0"` and relaxed unused checks); do not assume full strict-mode diagnostics.
 - Logs folder must be writable; missing `Logs/` directory causes Serilog startup errors on some hosts.
 - **PosDataService SQL timeout**: Dapper queries against `HQ_FAMTIME` (shared POS DB) can exceed 30s on large datasets. Always use `commandTimeout: 120` in `CommandDefinition` for `PosDataService` queries. The default 30s timeout will cause intermittent failures during bulk send operations.
-- **`/api/interface/upload` is `[AllowAnonymous]`** (dev test endpoint in `InterfaceController`) — do not expose in production.
+- **`/api/interface/upload`** — Development only (returns 404 in Production); requires JWT.
 - **`POST /api/monitor/simulate-statuses`** randomizes log statuses in DB — dev only, protected by vtec-user check. Never call in production.
 - **Frontend HTTP timeout is 30s** (`apiClient.ts`). Bulk trigger/import operations hit the 120s backend SQL timeout first, so the frontend may show a network error while the backend is still running. Increase `timeout` per-call or add polling for new bulk endpoints.
-- **Rate limiting is disabled**: `UseIpRateLimiting()` and all `AspNetCoreRateLimit` service registrations are commented out in `Program.cs`. Uncomment all related lines together to re-enable.
+- **Rate limiting is enabled** via `AspNetCoreRateLimit` (`IpRateLimiting` in appsettings; 100 req/min general, 5 login/5min). Dev overrides in `appsettings.Development.json`.
+- **JWT Secret** must be set via `appsettings.Development.json` (local) or `JWT__Secret` env var (production); `appsettings.json` ships with empty secret. Placeholder secrets are rejected outside Development.
+- **Public routes** (no JWT): `/api/auth/login`, `/api/auth/refresh`, `/health`, Swagger (dev). All config/debug/upload endpoints require auth.
 - **`appsettings.Development.json` contains real DB credentials** (live SQL Server IP + credentials). Do not commit mutations to this file or leak it.
 
 ## API Endpoints Reference
@@ -108,7 +114,7 @@ Auth: JWT bearer. Public routes: `/api/auth/login`, `/api/auth/refresh`, `/swagg
 | POST | `/preview` | [Authorize] | Fetch POS bills by dateFrom/dateTo/branch/type → return `ImportPreviewItemDto[]` (status NEW/DUP) without writing |
 | POST | `/import` | [Authorize] | Pull from POS → insert as PENDING (no SAP send); returns `ImportResultDto` |
 | POST | `/resend` | [Authorize] | Batch resend `SapArInvoiceHeadDto[]` from request body |
-| POST | `/upload` | AllowAnonymous | Dev test: accept raw JSON, create PENDING log — **do not expose in production** |
+| POST | `/upload` | [Authorize] (Dev only) | Dev test: accept raw JSON, create PENDING log — **404 in Production** |
 
 **MonitorController** (`/api/monitor`):
 
@@ -121,9 +127,9 @@ Auth: JWT bearer. Public routes: `/api/auth/login`, `/api/auth/refresh`, `/swagg
 | POST | `/simulate-statuses` | [Authorize] | **DEV ONLY** — randomize log statuses (vtec user check) |
 
 **Auth/Config**:
-- `POST /api/auth/login`, `POST /api/auth/refresh` — public
-- `GET/PUT /api/config` — full config CRUD
-- `PUT /api/debug/config/{key}` — upsert config without auth (dev only)
+- `POST /api/auth/login`, `POST /api/auth/refresh`, `GET /health` — public
+- `GET/PUT /api/config` — requires JWT
+- `PUT /api/debug/config/{key}` — requires JWT; **404 outside Development**
 
 ## Development & Testing
 
@@ -133,8 +139,8 @@ Auth: JWT bearer. Public routes: `/api/auth/login`, `/api/auth/refresh`, `/swagg
 - [backend/scripts/test_upload.js](backend/scripts/test_upload.js) — manual POST to `/api/interface/create` for testing
 - [backend/scripts/get_configs.js](backend/scripts/get_configs.js) — fetch current config dict
 
-**Debug endpoints** (public, dev-only):
-- `PUT /api/debug/config/{key}` — upsert a config without auth (see [backend/POS2SAP.API/Controllers/DebugController.cs](backend/POS2SAP.API/Controllers/DebugController.cs))
+**Debug endpoints** (JWT required; dev-only):
+- `PUT /api/debug/config/{key}` — upsert a config (see [backend/POS2SAP.API/Controllers/DebugController.cs](backend/POS2SAP.API/Controllers/DebugController.cs)); returns 404 outside Development
 
 **Swagger UI**:
 - Visit `http://localhost:5163/swagger` after running backend; all endpoints documented with auth headers shown.

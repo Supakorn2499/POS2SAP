@@ -52,7 +52,8 @@ public class SapArInvoiceService : ISapArInvoiceService
                 _logger.LogInformation("SAP call attempt {Attempt}/{Max} for DocNum={DocNum} to {Endpoint}", attempt, maxRetry, docNumForLogging, endpoint);
                 _logger.LogDebug("SAP Payload for {DocNum}: {Payload}", docNumForLogging, json);
 
-                var response = await _httpClient.PostAsync(endpoint, content);
+                using var timeoutCts = SapHttpHelper.CreateRequestTimeoutCancellation(config);
+                var response = await _httpClient.PostAsync(endpoint, content, timeoutCts.Token);
                 var raw = await response.Content.ReadAsStringAsync();
 
                 if (response.IsSuccessStatusCode)

@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
 using POS2SAP.API.Common;
 using POS2SAP.API.DTOs.Monitor;
+using POS2SAP.API.DTOs.Sap;
 using POS2SAP.API.Services.Interfaces;
 
 namespace POS2SAP.API.Controllers;
@@ -12,10 +13,12 @@ namespace POS2SAP.API.Controllers;
 public class MonitorController : ControllerBase
 {
     private readonly IInterfaceMonitorService _monitor;
+    private readonly IPosDataService _posData;
 
-    public MonitorController(IInterfaceMonitorService monitor)
+    public MonitorController(IInterfaceMonitorService monitor, IPosDataService posData)
     {
         _monitor = monitor;
+        _posData  = posData;
     }
 
     /// <summary>Get paginated log list with filters</summary>
@@ -38,6 +41,10 @@ public class MonitorController : ControllerBase
         var detail = await _monitor.GetDetailAsync(id);
         if (detail is null)
             return NotFound(ApiResponse<InterfaceLogDetailDto>.NotFound($"ไม่พบ log id={id}"));
+
+        if (string.Equals(detail.InterfaceType, "DL", StringComparison.OrdinalIgnoreCase))
+            await RefreshDeliveryDetailJsonAsync(detail);
+
         return Ok(ApiResponse<InterfaceLogDetailDto>.Ok(detail));
     }
 
@@ -79,5 +86,29 @@ public class MonitorController : ControllerBase
         if (!deleted)
             return BadRequest(ApiResponse<bool>.Fail("ลบไม่ได้ — record ไม่พบ หรือ status เป็น SUCCESS/PROCESSING"));
         return Ok(ApiResponse<bool>.Ok(true, "ลบ record เรียบร้อยแล้ว"));
+    }
+
+    private async Task RefreshDeliveryDetailJsonAsync(InterfaceLogDetailDto detail)
+    {
+        SapDeliveryDto? dto = null;
+        try
+        {
+            var fresh = await _posData.GetDeliveriesByDocNosAsync(new[] { detail.PosDocNo });
+            dto = fresh.FirstOrDefault();
+        }
+        catch
+        {
+            // fall back to stored JSON below
+        }
+
+        dto ??= SapDeliveryJsonHelper.TryDeserialize(detail.PosData)
+            ?? SapDeliveryJsonHelper.TryDeserialize(detail.SapRequest);
+
+        if (dto is null) return;
+
+        var json = SapDeliveryJsonHelper.ToJson(dto);
+        detail.PosData = json;
+        if (!string.IsNullOrEmpty(detail.SapRequest))
+            detail.SapRequest = json;
     }
 }

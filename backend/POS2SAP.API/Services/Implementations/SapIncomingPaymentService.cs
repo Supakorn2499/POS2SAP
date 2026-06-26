@@ -39,8 +39,8 @@ public class SapIncomingPaymentService : ISapIncomingPaymentService
 
         SetAuthHeader(config);
 
-        // SAP expects an array
-        var json    = JsonSerializer.Serialize(new[] { payment }, JsonOpts);
+        // SAP expects root JSON array: [{ ... }]
+        var json    = SapIncomingPaymentJsonHelper.ToJsonArray(payment);
         _logger.LogInformation("SAP IncomingPayment request for {DocNum}: {Payload}", docNum, json);
         var content = new StringContent(json, Encoding.UTF8, "application/json");
 
@@ -53,7 +53,8 @@ public class SapIncomingPaymentService : ISapIncomingPaymentService
                 _logger.LogInformation("SAP IP call attempt {Attempt}/{Max} DocNum={DocNum} → {Endpoint}",
                     attempt, maxRetry, docNum, endpoint);
 
-                var response = await _httpClient.PostAsync(endpoint, content);
+                using var timeoutCts = SapHttpHelper.CreateRequestTimeoutCancellation(config);
+                var response = await _httpClient.PostAsync(endpoint, content, timeoutCts.Token);
                 var raw      = await response.Content.ReadAsStringAsync();
 
                 if (response.IsSuccessStatusCode)

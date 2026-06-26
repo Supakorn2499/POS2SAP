@@ -1,46 +1,44 @@
-// src/pages/ConfigPage.tsx
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Save } from 'lucide-react';
+import { Save, Clock, Database, Gauge, FileText, Receipt, Truck, Wrench } from 'lucide-react';
 import { toast } from 'sonner';
 import { useLanguage } from '@/contexts/LanguageContext';
 import configService from '@/services/configService';
+import ConfigFieldRow from '@/components/config/ConfigFieldRow';
+import {
+  CONFIG_SECTIONS,
+  SAP_BASE_KEYS,
+  SAP_INTERFACE_MAP,
+  isKnownConfigKey,
+  readFieldValue,
+  resolveStorageKey,
+  type ConfigSectionId,
+} from '@/lib/configLayout';
+import type { InterfaceConfigDto } from '@/types/config';
 
-const LABEL_MAP: Record<string, string> = {
-  sap_url_test:               'SAP URL (Test)',
-  sap_url_prod:               'SAP URL (Production)',
-  sap_env:                    'Environment ที่ใช้งาน (TST / PRD)',
-  sap_auth_type:              'ประเภท Auth (None / ApiKey / Basic)',
-  sap_api_key:                'SAP API Key',
-  sap_basic_username:         'SAP Basic Auth Username',
-  sap_basic_password:         'SAP Basic Auth Password',
-  schedule_interval_minutes:  'ช่วงเวลา Schedule (นาที)',
-  schedule_enabled:           'เปิดใช้ Schedule (true / false)',
-  max_retry_count:            'จำนวน Retry สูงสุด',
-};
-
-const SENSITIVE_KEYS = new Set(['sap_api_key', 'sap_basic_password']);
+const NAV_ITEMS: { id: ConfigSectionId; labelKey: string; icon: typeof Clock }[] = [
+  { id: 'auto', labelKey: 'configNav.auto', icon: Clock },
+  { id: 'import', labelKey: 'configNav.import', icon: Database },
+  { id: 'performance', labelKey: 'configNav.performance', icon: Gauge },
+  { id: 'sap-ar', labelKey: 'configNav.sapAr', icon: FileText },
+  { id: 'sap-ap', labelKey: 'configNav.sapAp', icon: Receipt },
+  { id: 'sap-dl', labelKey: 'configNav.sapDl', icon: Truck },
+  { id: 'advanced', labelKey: 'configNav.advanced', icon: Wrench },
+];
 
 export default function ConfigPage() {
   const { t } = useLanguage();
   const queryClient = useQueryClient();
+  const [section, setSection] = useState<ConfigSectionId>('auto');
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [newKey, setNewKey] = useState('');
+  const [newValue, setNewValue] = useState('');
+
   const { data: configs = [], isLoading } = useQuery({
     queryKey: ['configs'],
     queryFn: () => configService.getConfigs(),
     staleTime: 60_000,
   });
-
-  const [values, setValues] = useState<Record<string, string>>({});
-  const [interfaceType, setInterfaceType] = useState('ARInvoice');
-  const [showGlobal, setShowGlobal] = useState(false);
-  const [newKey, setNewKey] = useState('');
-  const [newValue, setNewValue] = useState('');
-  const [prefixWithInterface, setPrefixWithInterface] = useState(true);
-
-  const getConfigLabel = (key: string) => {
-    const label = t(`configLabel.${key}`);
-    return label.startsWith('configLabel.') ? key : label;
-  };
 
   useEffect(() => {
     const map: Record<string, string> = {};
@@ -60,168 +58,270 @@ export default function ConfigPage() {
     },
   });
 
-  async function handleSaveAll() {
-    for (const config of configs) {
-      const val = values[config.configKey] ?? '';
-      if (val !== (config.configValue ?? '')) {
-        await mutation.mutateAsync({ key: config.configKey, value: val });
-      }
-    }
-    toast.success(t('saveSuccess'));
+  const sapInterface = section.startsWith('sap-')
+    ? SAP_INTERFACE_MAP[section as 'sap-ar' | 'sap-ap' | 'sap-dl']
+    : null;
+
+  const unknownConfigs = useMemo(
+    () => configs.filter((c) => !isKnownConfigKey(c.configKey)),
+    [configs],
+  );
+
+  function handleChange(storageKey: string, value: string) {
+    setValues((v) => ({ ...v, [storageKey]: value }));
   }
 
-  async function handleAddConfig() {
-    if (!newKey || !newKey.trim()) {
-      toast.error(t('configKeyRequired') || 'Config key is required');
-      return;
-    }
-    const keyToUse = prefixWithInterface && !newKey.includes('.')
-      ? `${interfaceType}.${newKey}`
-      : newKey;
-    try {
-      await mutation.mutateAsync({ key: keyToUse, value: newValue ?? '' });
-      setNewKey('');
-      setNewValue('');
-      toast.success(t('addConfigSuccess') || 'Config added');
-    } catch (err) {
-      // mutation onError will show toast
-    }
+  async function handleSaveKey(storageKey: string, value: string) {
+    await mutation.mutateAsync({ key: storageKey, value });
   }
 
-  async function copyGlobalToInterface() {
-    // copy keys like sap_* (global) to interface-prefixed keys
-    for (const cfg of configs) {
-      if (!cfg.configKey.includes('.') && cfg.configKey.startsWith('sap_')) {
-        const targetKey = `${interfaceType}.${cfg.configKey}`;
-        const current = values[targetKey] ?? '';
-        const val = cfg.configValue ?? '';
-        if (current !== val) {
-          await mutation.mutateAsync({ key: targetKey, value: val });
-          setValues((v) => ({ ...v, [targetKey]: val }));
-        }
+  async function handleSaveSection() {
+    const keysToSave = getSectionKeys(section);
+    let saved = 0;
+    for (const baseKey of keysToSave) {
+      const storageKey = resolveStorageKey(baseKey, sapInterface, configs);
+      const val = values[storageKey] ?? '';
+      const original = configs.find((c) => c.configKey === storageKey)?.configValue ?? '';
+      if (val !== original) {
+        await mutation.mutateAsync({ key: storageKey, value: val });
+        saved++;
       }
     }
-    toast.success(t('copySuccess') || 'Copied global configs to interface');
+    if (saved === 0) toast.message(t('configNoChanges'));
+    else toast.success(t('saveSuccess'));
   }
 
   async function handleTestConnection() {
+    if (!sapInterface) return;
     try {
-      const res = await configService.testConfig(interfaceType);
-      if (res.success) toast.success(res.message || t('testSuccess') || 'Connection successful');
-      else toast.error(res.message || t('testFailed') || 'Test failed');
+      const res = await configService.testConfig(sapInterface);
+      if (res.success) toast.success(res.message || t('testSuccess'));
+      else toast.error(res.message || t('testFailed'));
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : t('testFailed') || 'Test failed');
+      toast.error(err instanceof Error ? err.message : t('testFailed'));
     }
   }
 
+  async function handleCopyGlobalSap() {
+    if (!sapInterface) return;
+    for (const baseKey of SAP_BASE_KEYS) {
+      const globalVal = values[baseKey] ?? configs.find((c) => c.configKey === baseKey)?.configValue ?? '';
+      const targetKey = `${sapInterface}.${baseKey}`;
+      await mutation.mutateAsync({ key: targetKey, value: globalVal });
+      setValues((v) => ({ ...v, [targetKey]: globalVal }));
+    }
+    toast.success(t('copySuccess'));
+  }
+
+  async function handleAddConfig() {
+    if (!newKey.trim()) {
+      toast.error(t('configKeyRequired'));
+      return;
+    }
+    await mutation.mutateAsync({ key: newKey.trim(), value: newValue ?? '' });
+    setNewKey('');
+    setNewValue('');
+    toast.success(t('addConfigSuccess'));
+  }
+
+  const activeSectionDef = CONFIG_SECTIONS.find((s) => s.id === section);
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <h1 className="text-xl font-bold">{t('configTitle')}</h1>
-          <p className="text-sm text-muted-foreground">{t('configSubtitle')}</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <select value={interfaceType} onChange={(e) => setInterfaceType(e.target.value)} className="rounded-md border bg-background px-3 py-2 text-sm">
-            <option value="ARInvoice">ARInvoice</option>
-            <option value="IncomingPayment">IncomingPayment</option>
-            <option value="Delivery">Delivery</option>
-          </select>
-          <label className="flex items-center gap-2 text-sm text-muted-foreground">
-            <input type="checkbox" checked={showGlobal} onChange={(e) => setShowGlobal(e.target.checked)} />
-            {t('showGlobalConfigs')}
-          </label>
-          <button onClick={copyGlobalToInterface} className="rounded-md border px-3 py-2 text-sm hover:bg-muted">{t('copyGlobal') || 'Copy global → interface'}</button>
-          <button onClick={handleTestConnection} className="rounded-md border px-3 py-2 text-sm hover:bg-muted">{t('testConnection') || 'Test connection'}</button>
-          <button
-          onClick={handleSaveAll}
-          disabled={mutation.isPending}
-          className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-        >
-          <Save className="h-4 w-4" />
-          {mutation.isPending ? t('saving') : t('saveAll')}
-          </button>
+          <p className="text-sm text-muted-foreground">{t('configSubtitleGrouped')}</p>
         </div>
       </div>
 
-      <div className="rounded-md border bg-card p-4">
-        <h2 className="text-sm font-medium mb-2">{t('addConfigTitle') ?? 'Add Config'}</h2>
-        <div className="flex gap-3">
-          <input
-            placeholder={t('configKeyPlaceholder') ?? 'key (e.g. sap_url_test)'}
-            value={newKey}
-            onChange={(e) => setNewKey(e.target.value)}
-            className="rounded-md border bg-background px-3 py-2 text-sm w-64"
-          />
-          <input
-            placeholder={t('configValuePlaceholder') ?? 'value'}
-            value={newValue}
-            onChange={(e) => setNewValue(e.target.value)}
-            className="rounded-md border bg-background px-3 py-2 text-sm flex-1"
-          />
-          <label className="flex items-center gap-2 text-sm text-muted-foreground">
-            <input type="checkbox" checked={prefixWithInterface} onChange={(e) => setPrefixWithInterface(e.target.checked)} />
-            {t('prefixWithInterface') ?? 'Prefix with interface'}
-          </label>
-          <button
-            onClick={handleAddConfig}
-            disabled={mutation.isPending}
-            className="shrink-0 rounded-md border px-3 py-2 text-xs hover:bg-muted disabled:opacity-50"
-          >
-            {t('add') ?? 'Add'}
-          </button>
-        </div>
-      </div>
+      <div className="flex flex-col gap-6 lg:flex-row">
+        {/* Sidebar navigation */}
+        <nav className="flex shrink-0 flex-row flex-wrap gap-1 lg:w-52 lg:flex-col">
+          {NAV_ITEMS.map(({ id, labelKey, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setSection(id)}
+              className={`flex items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm transition-colors ${
+                section === id
+                  ? 'bg-primary text-primary-foreground font-medium'
+                  : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+              }`}
+            >
+              <Icon className="h-4 w-4 shrink-0" />
+              {t(labelKey)}
+            </button>
+          ))}
+        </nav>
 
-      {isLoading ? (
-        <div className="text-sm text-muted-foreground">{t('loading')}</div>
-      ) : (
-        <div className="rounded-xl border bg-card shadow-sm divide-y">
-          {configs
-            .filter((config) => {
-              const key = config.configKey.toLowerCase();
-              const iface = interfaceType.toLowerCase();
-              if (showGlobal && key.startsWith('sap_')) return true;
-              return key.includes(iface);
-            })
-            .map((config) => {
-            const currentValue = values[config.configKey] ?? '';
-            const isPerInterface = config.configKey.toLowerCase().startsWith(interfaceType.toLowerCase() + '.');
-            const isGlobalSap = !config.configKey.includes('.') && config.configKey.startsWith('sap_');
-
-            return (
-            <div key={config.configKey} className="flex items-center gap-4 px-5 py-3">
-              <div className="w-64 shrink-0">
-                <div className="flex items-center gap-2">
-                  <p className="text-sm font-medium">{getConfigLabel(config.configKey)}</p>
-                  {isPerInterface && (
-                    <span className="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded">per-interface</span>
+        {/* Main panel */}
+        <div className="min-w-0 flex-1 space-y-4">
+          {isLoading ? (
+            <div className="text-sm text-muted-foreground">{t('loading')}</div>
+          ) : (
+            <>
+              {/* Section header */}
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card px-5 py-4">
+                <div>
+                  <h2 className="font-semibold">
+                    {section === 'advanced'
+                      ? t('configGroup.advanced')
+                      : section.startsWith('sap-')
+                        ? t(`configGroup.sap.${sapInterface}`)
+                        : t(activeSectionDef?.titleKey ?? '')}
+                  </h2>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {section === 'advanced'
+                      ? t('configGroup.advancedDesc')
+                      : section.startsWith('sap-')
+                        ? t('configGroup.sapDesc')
+                        : t(activeSectionDef?.descKey ?? '')}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {section.startsWith('sap-') && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleTestConnection}
+                        className="rounded-md border px-3 py-2 text-sm hover:bg-muted"
+                      >
+                        {t('testConnection')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCopyGlobalSap}
+                        className="rounded-md border px-3 py-2 text-sm hover:bg-muted"
+                      >
+                        {t('copyGlobal')}
+                      </button>
+                    </>
                   )}
-                  {isGlobalSap && (
-                    <span className="text-xs bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded">global</span>
+                  {section !== 'advanced' && (
+                    <button
+                      type="button"
+                      onClick={handleSaveSection}
+                      disabled={mutation.isPending}
+                      className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                    >
+                      <Save className="h-4 w-4" />
+                      {mutation.isPending ? t('saving') : t('configSaveSection')}
+                    </button>
                   )}
                 </div>
-                <p className="text-xs text-muted-foreground font-mono mt-0.5">{config.configKey}</p>
               </div>
-              <input
-                type={SENSITIVE_KEYS.has(config.configKey) ? 'password' : 'text'}
-                value={currentValue}
-                onChange={(e) => setValues((v) => ({ ...v, [config.configKey]: e.target.value }))}
-                className="flex-1 rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring font-mono"
-                placeholder={SENSITIVE_KEYS.has(config.configKey) ? '••••••••' : t('configPlaceholder')}
-              />
-              <button
-                onClick={() => mutation.mutate({ key: config.configKey, value: currentValue })}
-                disabled={mutation.isPending}
-                className="shrink-0 rounded-md border px-3 py-2 text-xs hover:bg-muted disabled:opacity-50"
-              >
-                {t('save')}
-              </button>
-            </div>
-            );
-          })}
+
+              {/* Fields */}
+              {section !== 'advanced' && (
+                <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
+                  {renderSectionFields(
+                    section,
+                    configs,
+                    values,
+                    sapInterface,
+                    handleChange,
+                    handleSaveKey,
+                    mutation.isPending,
+                  )}
+                </div>
+              )}
+
+              {/* Advanced */}
+              {section === 'advanced' && (
+                <div className="space-y-4">
+                  <div className="rounded-xl border bg-card p-4">
+                    <h3 className="mb-3 text-sm font-medium">{t('addConfigTitle')}</h3>
+                    <div className="flex flex-col gap-3 sm:flex-row">
+                      <input
+                        placeholder={t('configKeyPlaceholder')}
+                        value={newKey}
+                        onChange={(e) => setNewKey(e.target.value)}
+                        className="rounded-md border bg-background px-3 py-2 text-sm font-mono sm:w-64"
+                      />
+                      <input
+                        placeholder={t('configValuePlaceholder')}
+                        value={newValue}
+                        onChange={(e) => setNewValue(e.target.value)}
+                        className="flex-1 rounded-md border bg-background px-3 py-2 text-sm font-mono"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddConfig}
+                        disabled={mutation.isPending}
+                        className="rounded-md border px-4 py-2 text-sm hover:bg-muted disabled:opacity-50"
+                      >
+                        {t('add')}
+                      </button>
+                    </div>
+                  </div>
+
+                  {unknownConfigs.length > 0 ? (
+                    <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
+                      {unknownConfigs.map((cfg) => (
+                        <ConfigFieldRow
+                          key={cfg.configKey}
+                          baseKey={cfg.configKey}
+                          storageKey={cfg.configKey}
+                          value={values[cfg.configKey] ?? ''}
+                          onChange={handleChange}
+                          onSave={handleSaveKey}
+                          saving={mutation.isPending}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">{t('configAdvancedEmpty')}</p>
+                  )}
+                </div>
+              )}
+            </>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
+}
+
+function getSectionKeys(section: ConfigSectionId): string[] {
+  if (section.startsWith('sap-')) return [...SAP_BASE_KEYS];
+  const def = CONFIG_SECTIONS.find((s) => s.id === section);
+  return def?.keys ?? [];
+}
+
+function renderSectionFields(
+  section: ConfigSectionId,
+  configs: InterfaceConfigDto[],
+  values: Record<string, string>,
+  sapInterface: string | null,
+  onChange: (k: string, v: string) => void,
+  onSave: (k: string, v: string) => void,
+  saving: boolean,
+) {
+  const keys = getSectionKeys(section);
+  if (keys.length === 0) return null;
+
+  return keys.map((baseKey) => {
+    const storageKey = resolveStorageKey(baseKey, sapInterface, configs);
+    const value = readFieldValue(baseKey, sapInterface, values, configs);
+    const prefixed = sapInterface ? `${sapInterface}.${baseKey}` : null;
+    const inheritedFromGlobal =
+      !!sapInterface &&
+      !!prefixed &&
+      storageKey === baseKey &&
+      !configs.some((c) => c.configKey === prefixed);
+
+    return (
+      <ConfigFieldRow
+        key={`${section}-${baseKey}`}
+        baseKey={baseKey}
+        storageKey={sapInterface && baseKey.startsWith('sap_') ? `${sapInterface}.${baseKey}` : storageKey}
+        value={value}
+        onChange={onChange}
+        onSave={onSave}
+        saving={saving}
+        inheritedFromGlobal={inheritedFromGlobal}
+      />
+    );
+  });
 }

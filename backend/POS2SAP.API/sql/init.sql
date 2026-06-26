@@ -69,8 +69,17 @@ BEGIN
         (LEFT(LOWER(REPLACE(NEWID(),'-','')), 26), 'sap_api_key',                '',       'SAP API Key (if auth_type = ApiKey)'),
         (LEFT(LOWER(REPLACE(NEWID(),'-','')), 26), 'sap_basic_username',         '',       'SAP Basic Auth username (if auth_type = Basic)'),
         (LEFT(LOWER(REPLACE(NEWID(),'-','')), 26), 'sap_basic_password',         '',       'SAP Basic Auth password (if auth_type = Basic)'),
-        (LEFT(LOWER(REPLACE(NEWID(),'-','')), 26), 'schedule_interval_minutes',  '5',      'Interval in minutes for scheduled job'),
+        (LEFT(LOWER(REPLACE(NEWID(),'-','')), 26), 'schedule_interval_minutes',  '5',      'Interval in minutes for scheduled job wake-up'),
         (LEFT(LOWER(REPLACE(NEWID(),'-','')), 26), 'schedule_enabled',           'true',   'Enable/disable automatic scheduled job'),
+        (LEFT(LOWER(REPLACE(NEWID(),'-','')), 26), 'schedule_window_start',      '20:00',  'Daily start time (HH:mm) — empty = always'),
+        (LEFT(LOWER(REPLACE(NEWID(),'-','')), 26), 'schedule_window_end',        '06:00',  'Daily end time (HH:mm) — overnight OK; empty = no end'),
+        (LEFT(LOWER(REPLACE(NEWID(),'-','')), 26), 'schedule_timezone',          'Asia/Bangkok', 'IANA or Windows timezone id'),
+        (LEFT(LOWER(REPLACE(NEWID(),'-','')), 26), 'schedule_max_runtime_minutes','240',   'Max continuous drain minutes per wake-up'),
+        (LEFT(LOWER(REPLACE(NEWID(),'-','')), 26), 'interface_cutover_date',     '2026-06-01', 'First POS doc date to interface (yyyy-MM-dd)'),
+        (LEFT(LOWER(REPLACE(NEWID(),'-','')), 26), 'import_date_to_mode',        'yesterday', 'Import up to: yesterday or today'),
+        (LEFT(LOWER(REPLACE(NEWID(),'-','')), 26), 'import_batch_size',          '500',    'Max docs per import/send batch'),
+        (LEFT(LOWER(REPLACE(NEWID(),'-','')), 26), 'sap_http_timeout_seconds',   '90',     'SAP HTTP timeout per request (seconds)'),
+        (LEFT(LOWER(REPLACE(NEWID(),'-','')), 26), 'import_chunk_days',          '7',      'Split import queries by N-day chunks when range is wider'),
         (LEFT(LOWER(REPLACE(NEWID(),'-','')), 26), 'max_retry_count',            '3',      'Maximum retry attempts before marking FAILED final');
 
     PRINT 'Created table: interface_configs with seed data';
@@ -151,4 +160,54 @@ BEGIN
 END
 ELSE
     PRINT 'Table already exists: paytype_gl_mapping';
+
+-- --------------------------------------------------------
+-- Table: productgroup_sap_mapping  (POS product group → SAP item group)
+-- Seed: run productgroup_sap_mapping.sql separately
+-- --------------------------------------------------------
+IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='productgroup_sap_mapping' AND xtype='U')
+BEGIN
+    CREATE TABLE productgroup_sap_mapping (
+        MappingID          INT IDENTITY(1,1) PRIMARY KEY,
+        ProductGroupID     INT           NOT NULL,
+        ProductGroupCode   NVARCHAR(50)  NULL,
+        ProductGroupName   NVARCHAR(100) NULL,
+        SapItemGroupCode   NVARCHAR(50)  NULL,
+        SapItemGroupName   NVARCHAR(100) NULL,
+        IsActive           TINYINT       NOT NULL DEFAULT 1,
+        SortOrder          INT           NOT NULL DEFAULT 0,
+        Remarks            NVARCHAR(200) NULL,
+        CreatedAt          DATETIME      NOT NULL DEFAULT GETDATE(),
+        UpdatedAt          DATETIME      NOT NULL DEFAULT GETDATE(),
+        CONSTRAINT UQ_productgroup_sap_ProductGroupID UNIQUE (ProductGroupID)
+    );
+
+    PRINT 'Created table: productgroup_sap_mapping — run productgroup_sap_mapping.sql to seed';
+END
+ELSE
+    PRINT 'Table already exists: productgroup_sap_mapping';
+
+-- --------------------------------------------------------
+-- Table: dl_documenttype_mapping  (Delivery — enabled POS document types)
+-- Seed: auto on API startup via DeliveryDocTypeService.EnsureSchemaAsync
+-- --------------------------------------------------------
+IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='dl_documenttype_mapping' AND xtype='U')
+BEGIN
+    CREATE TABLE dl_documenttype_mapping (
+        MappingID          INT IDENTITY(1,1) PRIMARY KEY,
+        DocumentTypeID     INT           NOT NULL,
+        DocumentTypeCode   NVARCHAR(50)  NOT NULL,
+        DocumentTypeName   NVARCHAR(200) NULL,
+        IsEnabled          TINYINT       NOT NULL DEFAULT 1,
+        SortOrder          INT           NOT NULL DEFAULT 0,
+        Remarks            NVARCHAR(200) NULL,
+        CreatedAt          DATETIME      NOT NULL DEFAULT GETDATE(),
+        UpdatedAt          DATETIME      NOT NULL DEFAULT GETDATE(),
+        CONSTRAINT UQ_dl_doctype_DocumentTypeID UNIQUE (DocumentTypeID)
+    );
+
+    PRINT 'Created table: dl_documenttype_mapping — run API once to seed default STOCK types';
+END
+ELSE
+    PRINT 'Table already exists: dl_documenttype_mapping';
 

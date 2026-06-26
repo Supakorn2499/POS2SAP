@@ -2,18 +2,25 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { Search, X, Play, RefreshCw, Zap } from 'lucide-react';
+import { Search, X, Play, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import monitorService from '@/services/monitorService';
 import interfaceService from '@/services/interfaceService';
 import { StatusBadge } from '@/components/StatusBadge';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { useAuth } from '@/contexts/AuthContext';
 import { fmtDate, fmtDatetime, fmt, todayStr, cn } from '@/lib/utils';
 import type { BranchOptionDto, InterfaceLogQueryParams } from '@/types/monitor';
 
 const STATUS_OPTIONS = ['', 'PENDING', 'PROCESSING', 'SUCCESS', 'FAILED', 'RETRY'];
+
+function interfaceTypeToTrigger(interfaceType: string): string {
+  switch (interfaceType) {
+    case 'AP': return 'IncomingPayment';
+    case 'DL': return 'Delivery';
+    default: return 'ARInvoice';
+  }
+}
 
 const FILTER_KEY = 'monitorFilters';
 
@@ -28,7 +35,6 @@ function loadFilters() {
 export default function MonitorPage() {
   const navigate = useNavigate();
   const { t } = useLanguage();
-  const { username } = useAuth();
 
   // Restore last filter from sessionStorage (survives back-navigation)
   const _saved = loadFilters();
@@ -76,7 +82,7 @@ export default function MonitorPage() {
   }, [params]);
 
   const [triggering, setTriggering] = useState(false);
-  const [simulating, setSimulating] = useState(false);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
   const [sendingId, setSendingId] = useState<string | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{
     isOpen: boolean;
@@ -140,7 +146,7 @@ export default function MonitorPage() {
     setTriggering(true);
     try {
       const result = await interfaceService.triggerManualFor(pendingInterface);
-      toast.success(t('triggerSuccess'));
+      toast.success(t('triggerSuccess', { sent: result.sent }));
       refetch();
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : t('triggerError'));
@@ -149,27 +155,17 @@ export default function MonitorPage() {
     }
   }
 
-  async function handleSimulate() {
-    setSimulating(true);
-    try {
-      const result = await monitorService.simulateStatuses();
-      toast.success(result);
-      refetch();
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : 'เกิดข้อผิดพลาดในการจำลอง');
-    } finally {
-      setSimulating(false);
-    }
-  }
-
   async function handleRetry(id: string, e: React.MouseEvent) {
     e.stopPropagation();
+    setRetryingId(id);
     try {
       await interfaceService.retryRecord(id);
       toast.success(t('retrySuccess'));
       refetch();
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : t('retryError'));
+    } finally {
+      setRetryingId(null);
     }
   }
 
@@ -231,16 +227,6 @@ export default function MonitorPage() {
           <p className="text-sm text-muted-foreground">{t('monitorSubtitle')}</p>
         </div>
         <div className="flex gap-2">
-          {username === 'vtec' && (
-            <button
-              onClick={handleSimulate}
-              disabled={simulating}
-              className="flex items-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50"
-            >
-              <Zap className="h-4 w-4" />
-              {simulating ? 'กำลังจำลอง...' : 'Simulate Status'}
-            </button>
-          )}
           <button
             onClick={handleTrigger}
             disabled={triggering}
@@ -352,20 +338,74 @@ export default function MonitorPage() {
                   <td className="px-4 py-2 text-center text-xs">{r.retryCount}</td>
                   <td className="px-4 py-2 text-xs text-muted-foreground">{fmtDatetime(r.sentAt)}</td>
                   <td className="px-4 py-2" onClick={(e) => e.stopPropagation()}>
-                    {(r.status === 'PENDING' || r.status === 'FAILED' || r.status === 'RETRY' || r.status === 'PROCESSING') && (
+                    {r.status === 'PENDING' && (
                       <button
-                        onClick={(e) => handleSend(r.posDocNo, params.interfaceType || 'ARInvoice', e)}
+                        onClick={(e) => handleSend(r.posDocNo, interfaceTypeToTrigger(r.interfaceType ?? 'AR'), e)}
                         disabled={sendingId === r.posDocNo}
                         className="flex items-center gap-1 rounded px-2 py-1 text-xs bg-blue-50 text-blue-700 hover:bg-blue-100 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {sendingId === r.posDocNo ? (
                           <>
                             <div className="h-3 w-3 border-2 border-blue-700 border-t-transparent rounded-full animate-spin" />
-                            กำลังส่ง...
+                            {t('sending')}
                           </>
                         ) : (
                           <>
                             <Play className="h-3 w-3" /> {t('send')}
+                          </>
+                        )}
+                      </button>
+                    )}
+                    {(r.status === 'FAILED' || r.status === 'RETRY') && r.interfaceType === 'AR' && (
+                      <button
+                        onClick={(e) => handleRetry(r.id, e)}
+                        disabled={retryingId === r.id}
+                        className="flex items-center gap-1 rounded px-2 py-1 text-xs bg-amber-50 text-amber-700 hover:bg-amber-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {retryingId === r.id ? (
+                          <>
+                            <div className="h-3 w-3 border-2 border-amber-700 border-t-transparent rounded-full animate-spin" />
+                            {t('retrying')}
+                          </>
+                        ) : (
+                          <>
+                            <RefreshCw className="h-3 w-3" /> {t('resend')}
+                          </>
+                        )}
+                      </button>
+                    )}
+                    {(r.status === 'FAILED' || r.status === 'RETRY') && r.interfaceType === 'AP' && (
+                      <button
+                        onClick={(e) => handleSend(r.posDocNo, 'IncomingPayment', e)}
+                        disabled={sendingId === r.posDocNo}
+                        className="flex items-center gap-1 rounded px-2 py-1 text-xs bg-amber-50 text-amber-700 hover:bg-amber-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {sendingId === r.posDocNo ? (
+                          <>
+                            <div className="h-3 w-3 border-2 border-amber-700 border-t-transparent rounded-full animate-spin" />
+                            {t('sending')}
+                          </>
+                        ) : (
+                          <>
+                            <RefreshCw className="h-3 w-3" /> {t('resend')}
+                          </>
+                        )}
+                      </button>
+                    )}
+                    {(r.status === 'FAILED' || r.status === 'RETRY') && r.interfaceType === 'DL' && (
+                      <button
+                        onClick={(e) => handleRetry(r.id, e)}
+                        disabled={retryingId === r.id}
+                        className="flex items-center gap-1 rounded px-2 py-1 text-xs bg-amber-50 text-amber-700 hover:bg-amber-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {retryingId === r.id ? (
+                          <>
+                            <div className="h-3 w-3 border-2 border-amber-700 border-t-transparent rounded-full animate-spin" />
+                            {t('retrying')}
+                          </>
+                        ) : (
+                          <>
+                            <RefreshCw className="h-3 w-3" /> {t('resend')}
                           </>
                         )}
                       </button>

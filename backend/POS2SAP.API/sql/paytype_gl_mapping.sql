@@ -2,11 +2,11 @@
 -- paytype_gl_mapping — GL account mapping for Incoming Payment
 -- รันบน HQ_FAMTIME หลังจาก init.sql
 -- ============================================================
--- SapPayCategory values:
---   CASH        → CashAcct/CashSum (aggregate all rows of this type)
---   TRANSFER    → TrsfrAcct/TrsfrSum (bank wire / PromptPay)
---   CREDIT_CARD → paymentCreditCards[] one line per payment row (credit card + delivery platforms + vouchers)
---   SKIP        → ไม่ส่ง SAP (เช่น compliment, stock write-off)
+-- SapPayCategory values (configured in GL Mapping UI):
+--   CASH        → CashAcct + CashSum (sum all pay rows in this category)
+--   TRANSFER    → TrsfrAcct + TrsfrSum + TrsfrDate + TrsfrRef (sum all rows)
+--   CREDIT_CARD → paymentCreditCards[] one line per pay row
+--   SKIP        → excluded from Incoming Payment JSON
 -- ============================================================
 
 IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='paytype_gl_mapping' AND xtype='U')

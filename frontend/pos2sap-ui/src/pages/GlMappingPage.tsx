@@ -1,30 +1,90 @@
 // src/pages/GlMappingPage.tsx
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Save, Trash2, PlusCircle } from 'lucide-react';
+import { Map, Trash2, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import glMappingService from '@/services/glMappingService';
-import { ConfirmDialog } from '@/components/ConfirmDialog';
+import {
+  MappingActionButton,
+  MappingPageHeader,
+  MappingSection,
+  MappingStatGrid,
+  MappingToolbar,
+  MappingUnsavedBar,
+  MappingPagination,
+  mappingPaginationLabels,
+  mappingInputClass,
+  mappingTableClass,
+  mappingTableHeadClass,
+} from '@/components/mapping/MappingPageLayout';
+import {
+  MappingConfirmDialog,
+  type MappingConfirmState,
+} from '@/components/mapping/MappingConfirmDialog';
 import { useLanguage } from '@/contexts/LanguageContext';
 import type { PaytypeGlMappingDto, SapPayCategory, UpsertGlMappingDto } from '@/types/glMapping';
-import { cn } from '@/lib/utils';
+import { cn, fmtDatetime } from '@/lib/utils';
+import { useMappingPagination } from '@/hooks/useMappingPagination';
 
 const CATEGORIES: SapPayCategory[] = ['CASH', 'TRANSFER', 'CREDIT_CARD', 'SKIP'];
 
 const CATEGORY_BADGE: Record<SapPayCategory, string> = {
-  CASH:        'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300',
-  TRANSFER:    'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
-  CREDIT_CARD: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300',
-  SKIP:        'bg-gray-100 text-gray-500 dark:bg-gray-800/50 dark:text-gray-400',
+  CASH:        'bg-green-700 text-white',
+  TRANSFER:    'bg-blue-700 text-white',
+  CREDIT_CARD: 'bg-amber-700 text-white',
+  SKIP:        'bg-slate-600 text-white',
 };
 
+const CATEGORY_DOT: Record<SapPayCategory, string> = {
+  CASH:        'bg-green-600',
+  TRANSFER:    'bg-blue-600',
+  CREDIT_CARD: 'bg-amber-600',
+  SKIP:        'bg-slate-500',
+};
+
+const CATEGORY_BORDER: Record<SapPayCategory, string> = {
+  CASH:        'border-l-green-600',
+  TRANSFER:    'border-l-blue-600',
+  CREDIT_CARD: 'border-l-amber-600',
+  SKIP:        'border-l-slate-500',
+};
+
+type CategoryFilter = '' | SapPayCategory | 'PENDING_GL';
 type RowEdit = Omit<UpsertGlMappingDto, never>;
+
+type PendingAdd = { payTypeId: number; payTypeName: string };
+
+function isPendingGl(edit: UpsertGlMappingDto): boolean {
+  if (edit.sapPayCategory === 'SKIP') return false;
+  const gl = edit.sapGlAccount?.trim() ?? '';
+  return !gl || gl === '[GL-PENDING]';
+}
+
+function snapshotRow(row: PaytypeGlMappingDto): UpsertGlMappingDto {
+  return {
+    payTypeID: row.payTypeID,
+    payTypeName: row.payTypeName,
+    sapPayCategory: row.sapPayCategory,
+    sapGlAccount: row.sapGlAccount,
+    sapPayTypeName: row.sapPayTypeName,
+    isActive: row.isActive,
+    sortOrder: row.sortOrder,
+    remarks: row.remarks,
+  };
+}
 
 export default function GlMappingPage() {
   const { t } = useLanguage();
   const qc = useQueryClient();
 
-  const { data: rows = [], isLoading } = useQuery({
+  const [search, setSearch] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('');
+  const [edits, setEdits] = useState<Record<number, Partial<RowEdit>>>({});
+  const [confirm, setConfirm] = useState<MappingConfirmState>(null);
+  const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
+  const [pendingAdd, setPendingAdd] = useState<PendingAdd | null>(null);
+
+  const { data: rows = [], isLoading, isError, refetch } = useQuery({
     queryKey: ['glmapping'],
     queryFn: () => glMappingService.getAll(),
     staleTime: 30_000,
@@ -36,14 +96,19 @@ export default function GlMappingPage() {
     staleTime: 30_000,
   });
 
-  // Local edit state per row — keyed by payTypeID
-  const [edits, setEdits] = useState<Record<number, Partial<RowEdit>>>({});
-  const [deleteTarget, setDeleteTarget] = useState<PaytypeGlMappingDto | null>(null);
-
-  const upsertMutation = useMutation({
-    mutationFn: (dto: UpsertGlMappingDto) => glMappingService.upsert(dto),
+  const saveAllMutation = useMutation({
+    mutationFn: async (dirtyRows: PaytypeGlMappingDto[]) => {
+      for (const row of dirtyRows) {
+        const edit = getEdit(row);
+        const err = validateEdit(edit);
+        if (err) throw new Error(err);
+        await glMappingService.upsert(edit);
+      }
+    },
     onSuccess: () => {
       toast.success(t('glMappingSaved'));
+      setEdits({});
+      clearConfirm();
       qc.invalidateQueries({ queryKey: ['glmapping'] });
       qc.invalidateQueries({ queryKey: ['glmapping-unmapped'] });
     },
@@ -58,11 +123,34 @@ export default function GlMappingPage() {
       toast.success(t('glMappingDeleted'));
       qc.invalidateQueries({ queryKey: ['glmapping'] });
       qc.invalidateQueries({ queryKey: ['glmapping-unmapped'] });
-      setDeleteTarget(null);
+      clearConfirm();
     },
     onError: (err: unknown) => {
       toast.error(err instanceof Error ? err.message : t('saveFailed'));
-      setDeleteTarget(null);
+      clearConfirm();
+    },
+  });
+
+  const addMutation = useMutation({
+    mutationFn: (payload: PendingAdd) =>
+      glMappingService.upsert({
+        payTypeID: payload.payTypeId,
+        payTypeName: payload.payTypeName,
+        sapPayCategory: 'SKIP',
+        sapGlAccount: null,
+        sapPayTypeName: null,
+        isActive: true,
+        sortOrder: 99,
+        remarks: null,
+      }),
+    onSuccess: () => {
+      toast.success(t('glMappingSaved'));
+      clearConfirm();
+      qc.invalidateQueries({ queryKey: ['glmapping'] });
+      qc.invalidateQueries({ queryKey: ['glmapping-unmapped'] });
+    },
+    onError: (err: unknown) => {
+      toast.error(err instanceof Error ? err.message : t('saveFailed'));
     },
   });
 
@@ -80,236 +168,382 @@ export default function GlMappingPage() {
     };
   }
 
+  function isRowDirty(row: PaytypeGlMappingDto): boolean {
+    return JSON.stringify(getEdit(row)) !== JSON.stringify(snapshotRow(row));
+  }
+
   function setField<K extends keyof RowEdit>(payTypeId: number, field: K, value: RowEdit[K]) {
-    setEdits(prev => ({
+    setEdits((prev) => ({
       ...prev,
       [payTypeId]: { ...(prev[payTypeId] ?? {}), [field]: value },
     }));
   }
 
-  function handleSave(row: PaytypeGlMappingDto) {
-    upsertMutation.mutate(getEdit(row));
+  function validateEdit(edit: UpsertGlMappingDto): string | null {
+    if (edit.sapPayCategory !== 'SKIP') {
+      const gl = edit.sapGlAccount?.trim() ?? '';
+      if (!gl || gl === '[GL-PENDING]') return t('glMappingValidationGlAccount');
+      if (edit.sapPayCategory === 'CREDIT_CARD' && !edit.sapPayTypeName?.trim())
+        return t('glMappingValidationSapPayType');
+    }
+    return null;
   }
 
-  function handleAddUnmapped(payTypeId: number, payTypeName: string) {
-    upsertMutation.mutate({
-      payTypeID:      payTypeId,
-      payTypeName,
-      sapPayCategory: 'SKIP',
-      sapGlAccount:   null,
-      sapPayTypeName: null,
-      isActive:       true,
-      sortOrder:      99,
-      remarks:        null,
-    });
+  const dirtyRows = useMemo(() => rows.filter(isRowDirty), [rows, edits]);
+  const hasUnsaved = dirtyRows.length > 0;
+  const isBusy = saveAllMutation.isPending || deleteMutation.isPending || addMutation.isPending;
+
+  const filteredRows = useMemo(() => {
+    let result = rows;
+
+    if (categoryFilter === 'PENDING_GL') {
+      result = result.filter((r) => isPendingGl(getEdit(r)));
+    } else if (categoryFilter) {
+      result = result.filter((r) => getEdit(r).sapPayCategory === categoryFilter);
+    }
+
+    const q = search.trim().toLowerCase();
+    if (q) {
+      result = result.filter((r) =>
+        r.payTypeName.toLowerCase().includes(q) ||
+        String(r.payTypeID).includes(q) ||
+        (r.sapGlAccount ?? '').toLowerCase().includes(q)
+      );
+    }
+
+    return result;
+  }, [rows, search, categoryFilter, edits]);
+
+  const filteredUnmapped = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return unmapped;
+    return unmapped.filter(
+      (u) =>
+        u.payTypeName.toLowerCase().includes(q) ||
+        String(u.payTypeID).includes(q)
+    );
+  }, [unmapped, search]);
+
+  const mappedPager = useMappingPagination(filteredRows);
+  const unmappedPager = useMappingPagination(filteredUnmapped);
+  const paginationLabels = useMemo(() => mappingPaginationLabels(t), [t]);
+
+  const stats = useMemo(() => {
+    const active = rows.filter((r) => r.isActive).length;
+    const pendingGl = rows.filter((r) => isPendingGl(snapshotRow(r))).length;
+    return { total: rows.length, active, pendingGl, unmapped: unmapped.length };
+  }, [rows, unmapped.length]);
+
+  const CATEGORY_LABEL_KEY: Record<SapPayCategory, string> = {
+    CASH: 'glMappingCatCash',
+    TRANSFER: 'glMappingCatTransfer',
+    CREDIT_CARD: 'glMappingCatCreditCard',
+    SKIP: 'glMappingCatSkip',
+  };
+
+  function categoryLabel(c: SapPayCategory) {
+    return t(CATEGORY_LABEL_KEY[c]);
+  }
+
+  function handleConfirm() {
+    if (!confirm) return;
+    if (confirm.type === 'save') {
+      saveAllMutation.mutate(dirtyRows);
+    } else if (confirm.type === 'discard') {
+      setEdits({});
+      clearConfirm();
+    } else if (confirm.type === 'delete' && pendingDeleteId !== null) {
+      deleteMutation.mutate(pendingDeleteId);
+    } else if (confirm.type === 'add' && pendingAdd) {
+      addMutation.mutate({
+        payTypeId: pendingAdd.payTypeId,
+        payTypeName: pendingAdd.payTypeName,
+      });
+    }
+  }
+
+  function clearConfirm() {
+    setConfirm(null);
+    setPendingDeleteId(null);
+    setPendingAdd(null);
   }
 
   return (
-    <div className="p-6 space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="text-xl font-semibold">{t('glMappingTitle')}</h1>
-        <p className="text-sm text-muted-foreground mt-1">{t('glMappingSubtitle')}</p>
-      </div>
+    <div className="space-y-6 pb-24">
+      <MappingPageHeader
+        icon={Map}
+        title={t('glMappingTitle')}
+        subtitle={t('glMappingSubtitle')}
+      />
 
-      {/* Legend */}
-      <div className="flex flex-wrap gap-2 text-xs">
-        {CATEGORIES.map(c => (
-          <span key={c} className={cn('rounded-full px-2.5 py-0.5 font-medium', CATEGORY_BADGE[c])}>
-            {c === 'CASH' && t('glMappingCatCash')}
-            {c === 'TRANSFER' && t('glMappingCatTransfer')}
-            {c === 'CREDIT_CARD' && t('glMappingCatCreditCard')}
-            {c === 'SKIP' && t('glMappingCatSkip')}
+      {isError && (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-destructive bg-destructive/10 p-3 text-sm text-destructive">
+          <span>{t('glMappingLoadError')}</span>
+          <button type="button" onClick={() => refetch()} className="text-xs underline">{t('retry')}</button>
+        </div>
+      )}
+
+      <MappingStatGrid
+        items={[
+          { label: t('glMappingStatTotal'), value: stats.total },
+          { label: t('glMappingStatActive'), value: stats.active, accent: 'green' },
+          { label: t('glMappingStatPendingGl'), value: stats.pendingGl, warn: stats.pendingGl > 0 },
+          { label: t('glMappingStatUnmapped'), value: stats.unmapped, accent: 'muted' },
+        ]}
+      />
+
+      {stats.pendingGl > 0 && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>{t('glMappingPendingGlHint')}</span>
+        </div>
+      )}
+
+      <div className="flex flex-wrap gap-2 text-sm">
+        {CATEGORIES.map((c) => (
+          <span key={c} className={cn('rounded-md px-3 py-1 font-semibold shadow-sm', CATEGORY_BADGE[c])}>
+            {categoryLabel(c)}
           </span>
         ))}
       </div>
 
-      {/* Mapping table */}
-      <div className="rounded-lg border overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="bg-muted/50 text-xs text-muted-foreground uppercase">
-            <tr>
-              <th className="px-3 py-2 text-left w-16">{t('glMappingPayTypeID')}</th>
-              <th className="px-3 py-2 text-left min-w-36">{t('glMappingPayTypeName')}</th>
-              <th className="px-3 py-2 text-left w-36">{t('glMappingCategory')}</th>
-              <th className="px-3 py-2 text-left min-w-32">{t('glMappingGlAccount')}</th>
-              <th className="px-3 py-2 text-left min-w-36">{t('glMappingSapPayType')}</th>
-              <th className="px-3 py-2 text-center w-16">{t('glMappingActive')}</th>
-              <th className="px-3 py-2 text-left w-20">{t('glMappingSortOrder')}</th>
-              <th className="px-3 py-2 text-left min-w-36">{t('glMappingRemarks')}</th>
-              <th className="px-3 py-2 text-center w-24">{t('actions')}</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y">
-            {isLoading && (
+      <MappingToolbar
+        search={search}
+        onSearchChange={setSearch}
+        searchPlaceholder={t('glMappingSearchPlaceholder')}
+        showClear={Boolean(search || categoryFilter)}
+        onClear={() => { setSearch(''); setCategoryFilter(''); }}
+        clearLabel={t('clearButton')}
+        filter={(
+          <div className="flex items-center gap-2">
+            <label htmlFor="categoryFilter" className="whitespace-nowrap text-sm font-medium">
+              {t('glMappingFilterCategory')}
+            </label>
+            <select
+              id="categoryFilter"
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value as CategoryFilter)}
+              className="min-w-44 rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            >
+              <option value="">{t('glMappingFilterAll')}</option>
+              {CATEGORIES.map((c) => (
+                <option key={c} value={c}>{categoryLabel(c)}</option>
+              ))}
+              <option value="PENDING_GL">{t('glMappingFilterPendingGl')}</option>
+            </select>
+          </div>
+        )}
+      />
+
+      <MappingSection
+        variant="mapped"
+        title={t('mappingSectionMapped')}
+        hint={t('glMappingSubtitle')}
+        count={filteredRows.length}
+        isEmpty={!isLoading && filteredRows.length === 0}
+        emptyMessage={t('noData')}
+      >
+        <div className="overflow-x-auto">
+          <table className={mappingTableClass}>
+            <thead className={mappingTableHeadClass}>
               <tr>
-                <td colSpan={9} className="px-3 py-8 text-center text-muted-foreground">{t('loading')}</td>
+                <th className="px-3 py-2 text-left w-16">{t('glMappingPayTypeID')}</th>
+                <th className="px-3 py-2 text-left min-w-36">{t('glMappingPayTypeName')}</th>
+                <th className="px-3 py-2 text-left w-40">{t('glMappingCategory')}</th>
+                <th className="px-3 py-2 text-left min-w-32">{t('glMappingGlAccount')}</th>
+                <th className="px-3 py-2 text-left min-w-36">{t('glMappingSapPayType')}</th>
+                <th className="px-3 py-2 text-center w-16">{t('glMappingActive')}</th>
+                <th className="px-3 py-2 text-left w-20">{t('glMappingSortOrder')}</th>
+                <th className="px-3 py-2 text-left min-w-32">{t('glMappingRemarks')}</th>
+                <th className="px-3 py-2 text-left w-36">{t('glMappingUpdatedAt')}</th>
+                <th className="px-3 py-2 text-center w-20">{t('actions')}</th>
               </tr>
-            )}
-            {!isLoading && rows.length === 0 && (
-              <tr>
-                <td colSpan={9} className="px-3 py-8 text-center text-muted-foreground">{t('noData')}</td>
-              </tr>
-            )}
-            {rows.map(row => {
-              const e = getEdit(row);
-              const isDirty = JSON.stringify(e) !== JSON.stringify({
-                payTypeID: row.payTypeID, payTypeName: row.payTypeName,
-                sapPayCategory: row.sapPayCategory, sapGlAccount: row.sapGlAccount,
-                sapPayTypeName: row.sapPayTypeName, isActive: row.isActive,
-                sortOrder: row.sortOrder, remarks: row.remarks,
-              });
-              return (
-                <tr key={row.payTypeID} className={cn('hover:bg-muted/30 transition-colors', !e.isActive && 'opacity-50')}>
-                  <td className="px-3 py-1.5 text-muted-foreground font-mono text-xs">{row.payTypeID}</td>
-                  <td className="px-3 py-1.5 font-medium">{row.payTypeName}</td>
+            </thead>
+            <tbody className="divide-y">
+              {isLoading && (
+                <tr><td colSpan={10} className="px-3 py-8 text-center text-muted-foreground">{t('loading')}</td></tr>
+              )}
+              {mappedPager.paginated.map((row) => {
+                const e = getEdit(row);
+                const dirty = isRowDirty(row);
+                const pending = isPendingGl(e);
 
-                  {/* Category dropdown */}
-                  <td className="px-3 py-1.5">
-                    <select
-                      value={e.sapPayCategory}
-                      onChange={ev => setField(row.payTypeID, 'sapPayCategory', ev.target.value as SapPayCategory)}
-                      className={cn(
-                        'rounded-full px-2.5 py-0.5 text-xs font-medium border-0 outline-none cursor-pointer',
-                        CATEGORY_BADGE[e.sapPayCategory]
-                      )}
-                    >
-                      {CATEGORIES.map(c => (
-                        <option key={c} value={c}>{c}</option>
-                      ))}
-                    </select>
-                  </td>
-
-                  {/* GL Account */}
-                  <td className="px-3 py-1.5">
-                    <input
-                      type="text"
-                      value={e.sapGlAccount ?? ''}
-                      onChange={ev => setField(row.payTypeID, 'sapGlAccount', ev.target.value || null)}
-                      placeholder="GL Account..."
-                      className="w-full rounded border border-input bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
-                    />
-                  </td>
-
-                  {/* SAP Pay Type Name */}
-                  <td className="px-3 py-1.5">
-                    <input
-                      type="text"
-                      value={e.sapPayTypeName ?? ''}
-                      onChange={ev => setField(row.payTypeID, 'sapPayTypeName', ev.target.value || null)}
-                      placeholder={e.sapPayCategory === 'SKIP' ? '—' : 'SAP name...'}
-                      disabled={e.sapPayCategory === 'SKIP'}
-                      className="w-full rounded border border-input bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-40"
-                    />
-                  </td>
-
-                  {/* Active toggle */}
-                  <td className="px-3 py-1.5 text-center">
-                    <input
-                      type="checkbox"
-                      checked={e.isActive}
-                      onChange={ev => setField(row.payTypeID, 'isActive', ev.target.checked)}
-                      className="h-4 w-4 cursor-pointer accent-primary"
-                    />
-                  </td>
-
-                  {/* Sort Order */}
-                  <td className="px-3 py-1.5">
-                    <input
-                      type="number"
-                      value={e.sortOrder}
-                      onChange={ev => setField(row.payTypeID, 'sortOrder', parseInt(ev.target.value) || 0)}
-                      className="w-16 rounded border border-input bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
-                    />
-                  </td>
-
-                  {/* Remarks */}
-                  <td className="px-3 py-1.5">
-                    <input
-                      type="text"
-                      value={e.remarks ?? ''}
-                      onChange={ev => setField(row.payTypeID, 'remarks', ev.target.value || null)}
-                      placeholder="Remarks..."
-                      className="w-full rounded border border-input bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
-                    />
-                  </td>
-
-                  {/* Actions */}
-                  <td className="px-3 py-1.5">
-                    <div className="flex items-center justify-center gap-1">
+                return (
+                  <tr
+                    key={row.payTypeID}
+                    className={cn(
+                      'transition-colors hover:bg-muted/30',
+                      !e.isActive && 'opacity-50',
+                      pending && 'bg-amber-50/60',
+                      dirty && 'bg-sky-50/50 ring-1 ring-inset ring-sky-200'
+                    )}
+                  >
+                    <td className="px-3 py-1.5 font-mono text-xs text-muted-foreground">{row.payTypeID}</td>
+                    <td className="px-3 py-1.5 font-medium">{row.payTypeName}</td>
+                    <td className="px-3 py-1.5">
+                      <div className={cn('flex items-center gap-2 border-l-4 pl-2', CATEGORY_BORDER[e.sapPayCategory])}>
+                        <span className={cn('h-2.5 w-2.5 shrink-0 rounded-full', CATEGORY_DOT[e.sapPayCategory])} />
+                        <select
+                          value={e.sapPayCategory}
+                          onChange={(ev) => setField(row.payTypeID, 'sapPayCategory', ev.target.value as SapPayCategory)}
+                          className={cn(mappingInputClass, 'min-w-32 cursor-pointer font-medium')}
+                        >
+                          {CATEGORIES.map((c) => (
+                            <option key={c} value={c}>{categoryLabel(c)}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </td>
+                    <td className="px-3 py-1.5">
+                      <input
+                        type="text"
+                        value={e.sapGlAccount ?? ''}
+                        onChange={(ev) => setField(row.payTypeID, 'sapGlAccount', ev.target.value || null)}
+                        placeholder={t('glMappingGlAccountPlaceholder')}
+                        disabled={e.sapPayCategory === 'SKIP'}
+                        className={mappingInputClass}
+                      />
+                    </td>
+                    <td className="px-3 py-1.5">
+                      <input
+                        type="text"
+                        value={e.sapPayTypeName ?? ''}
+                        onChange={(ev) => setField(row.payTypeID, 'sapPayTypeName', ev.target.value || null)}
+                        placeholder={e.sapPayCategory === 'CREDIT_CARD' ? t('glMappingSapPayTypePlaceholder') : '—'}
+                        disabled={e.sapPayCategory === 'SKIP' || e.sapPayCategory !== 'CREDIT_CARD'}
+                        className={mappingInputClass}
+                      />
+                    </td>
+                    <td className="px-3 py-1.5 text-center">
+                      <input
+                        type="checkbox"
+                        checked={e.isActive}
+                        onChange={(ev) => setField(row.payTypeID, 'isActive', ev.target.checked)}
+                        className="h-4 w-4 cursor-pointer accent-primary"
+                      />
+                    </td>
+                    <td className="px-3 py-1.5">
+                      <input
+                        type="number"
+                        value={e.sortOrder}
+                        onChange={(ev) => setField(row.payTypeID, 'sortOrder', parseInt(ev.target.value, 10) || 0)}
+                        className="w-16 rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+                      />
+                    </td>
+                    <td className="px-3 py-1.5">
+                      <input
+                        type="text"
+                        value={e.remarks ?? ''}
+                        onChange={(ev) => setField(row.payTypeID, 'remarks', ev.target.value || null)}
+                        placeholder={t('glMappingRemarksPlaceholder')}
+                        className={mappingInputClass}
+                      />
+                    </td>
+                    <td className="px-3 py-1.5 whitespace-nowrap text-xs text-muted-foreground">
+                      {fmtDatetime(row.updatedAt)}
+                    </td>
+                    <td className="px-3 py-1.5 text-center">
                       <button
-                        onClick={() => handleSave(row)}
-                        disabled={!isDirty || upsertMutation.isPending}
-                        title={t('save')}
-                        className="rounded p-1.5 text-primary hover:bg-primary/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                      >
-                        <Save className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        onClick={() => setDeleteTarget(row)}
-                        disabled={deleteMutation.isPending}
+                        type="button"
+                        onClick={() => {
+                          setPendingDeleteId(row.payTypeID);
+                          setConfirm({ type: 'delete', name: row.payTypeName });
+                        }}
+                        disabled={isBusy}
                         title={t('glMappingDelete')}
-                        className="rounded p-1.5 text-destructive hover:bg-destructive/10 disabled:opacity-30 transition-colors"
+                        className="rounded p-1.5 text-destructive hover:bg-destructive/10 disabled:opacity-30"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Unmapped payment types */}
-      {unmapped.length > 0 && (
-        <div className="space-y-3">
-          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-            {t('glMappingUnmapped')} ({unmapped.length})
-          </h2>
-          <div className="rounded-lg border overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-muted/50 text-xs text-muted-foreground uppercase">
-                <tr>
-                  <th className="px-3 py-2 text-left w-16">{t('glMappingPayTypeID')}</th>
-                  <th className="px-3 py-2 text-left">{t('glMappingPayTypeName')}</th>
-                  <th className="px-3 py-2 text-center w-36">{t('glMappingAddRow')}</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {unmapped.map(u => (
-                  <tr key={u.payTypeID} className="hover:bg-muted/30">
-                    <td className="px-3 py-1.5 text-muted-foreground font-mono text-xs">{u.payTypeID}</td>
-                    <td className="px-3 py-1.5">{u.payTypeName}</td>
-                    <td className="px-3 py-1.5 text-center">
-                      <button
-                        onClick={() => handleAddUnmapped(u.payTypeID, u.payTypeName)}
-                        disabled={upsertMutation.isPending}
-                        className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs bg-primary/10 text-primary hover:bg-primary/20 disabled:opacity-40 transition-colors"
-                      >
-                        <PlusCircle className="h-3.5 w-3.5" />
-                        {t('glMappingAddRow')}
-                      </button>
                     </td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
-      )}
+        <MappingPagination
+          page={mappedPager.page}
+          totalPages={mappedPager.totalPages}
+          total={mappedPager.total}
+          from={mappedPager.from}
+          to={mappedPager.to}
+          pageSize={mappedPager.pageSize}
+          onPageChange={mappedPager.setPage}
+          onPageSizeChange={mappedPager.setPageSize}
+          disabled={isLoading}
+          labels={paginationLabels}
+        />
+      </MappingSection>
 
-      {/* Delete confirm dialog */}
-      <ConfirmDialog
-        isOpen={deleteTarget !== null}
-        title={t('glMappingDelete')}
-        message={t('glMappingDeleteConfirm').replace('{name}', deleteTarget?.payTypeName ?? '')}
-        confirmText={t('glMappingDelete')}
-        cancelText={t('detailBack')}
-        isDangerous
-        onConfirm={() => deleteTarget && deleteMutation.mutate(deleteTarget.payTypeID)}
-        onCancel={() => setDeleteTarget(null)}
+      <MappingSection
+        variant="available"
+        title={t('mappingSectionAvailable')}
+        hint={t('glMappingUnmapped')}
+        count={filteredUnmapped.length}
+        isEmpty={filteredUnmapped.length === 0}
+        emptyMessage={t('noData')}
+      >
+        <div className="overflow-x-auto">
+          <table className={mappingTableClass}>
+            <thead className={mappingTableHeadClass}>
+              <tr>
+                <th className="px-3 py-2 text-left w-16">{t('glMappingPayTypeID')}</th>
+                <th className="px-3 py-2 text-left">{t('glMappingPayTypeName')}</th>
+                <th className="px-3 py-2 text-right w-36">{t('actions')}</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {unmappedPager.paginated.map((u) => (
+                <tr key={u.payTypeID} className="hover:bg-muted/30">
+                  <td className="px-3 py-1.5 font-mono text-xs text-muted-foreground">{u.payTypeID}</td>
+                  <td className="px-3 py-1.5">{u.payTypeName}</td>
+                  <td className="px-3 py-1.5 text-right">
+                    <MappingActionButton
+                      variant="add"
+                      label={t('glMappingAddRow')}
+                      disabled={isBusy}
+                      onClick={() => {
+                        setPendingAdd({ payTypeId: u.payTypeID, payTypeName: u.payTypeName });
+                        setConfirm({ type: 'add', name: u.payTypeName });
+                      }}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <MappingPagination
+          page={unmappedPager.page}
+          totalPages={unmappedPager.totalPages}
+          total={unmappedPager.total}
+          from={unmappedPager.from}
+          to={unmappedPager.to}
+          pageSize={unmappedPager.pageSize}
+          onPageChange={unmappedPager.setPage}
+          onPageSizeChange={unmappedPager.setPageSize}
+          labels={paginationLabels}
+        />
+      </MappingSection>
+
+      <MappingUnsavedBar
+        visible={hasUnsaved}
+        message={t('mappingUnsavedChanges')}
+        discardLabel={t('mappingDiscard')}
+        saveLabel={t('mappingSaveChanges')}
+        saving={saveAllMutation.isPending}
+        onDiscard={() => setConfirm({ type: 'discard' })}
+        onSave={() => setConfirm({ type: 'save' })}
+      />
+
+      <MappingConfirmDialog
+        confirm={confirm}
+        t={t}
+        isLoading={isBusy}
+        saveCount={dirtyRows.length}
+        onConfirm={handleConfirm}
+        onCancel={clearConfirm}
       />
     </div>
   );

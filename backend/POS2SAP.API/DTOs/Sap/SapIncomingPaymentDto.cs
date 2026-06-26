@@ -32,7 +32,7 @@ public class SapIncomingPaymentDto
     public string Channel { get; set; } = string.Empty;
     public string Comments { get; set; } = string.Empty;
 
-    /// <summary>Links this payment to its SAP AR Invoice (InvoiceNum = interface_logs.sap_doc_num).</summary>
+    /// <summary>Links this payment to its SAP AR Invoice (InvoiceNum = AR Invoice DocNum from SUCCESS AR log).</summary>
     public List<SapPaymentInvoiceLineDto> PaymentInvoices { get; set; } = new();
 
     /// <summary>One entry per credit card / delivery platform / voucher payment row.
@@ -46,7 +46,7 @@ public class SapPaymentInvoiceLineDto
     public string DocNum { get; set; } = string.Empty;    // same as head DocNum
     public int LineNum { get; set; }                      // 0-based index
     public int InvType { get; set; } = 13;                // 13 = AR Invoice (SAP constant)
-    public string InvoiceNum { get; set; } = string.Empty; // interface_logs.sap_doc_num (AR)
+    public string InvoiceNum { get; set; } = string.Empty; // AR Invoice DocNum (from AR sap_request)
     public int Dcount { get; set; }                        // discount count, usually 0
     public decimal SumApplied { get; set; }                // amount applied = DocTotal of receipt
 }

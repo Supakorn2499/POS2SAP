@@ -201,7 +201,18 @@ public class InterfaceMonitorService : IInterfaceMonitorService
         await _db.ExecuteAsync(sql, new { Id = id, SapRequest = sapRequest, UpdatedAt = DateTime.UtcNow });
     }
 
-    public async Task UpdateSapResponseAsync(string id, string status, string? sapDocNum, string? sapResponse, string? errorMessage)
+    public async Task UpdatePosDataAsync(string id, string? posData)
+    {
+        var sql = @"
+            UPDATE interface_logs
+            SET pos_data = @PosData,
+                updated_at = @UpdatedAt
+            WHERE id = @Id";
+
+        await _db.ExecuteAsync(sql, new { Id = id, PosData = posData, UpdatedAt = DateTime.UtcNow });
+    }
+
+    public async Task UpdateSapResponseAsync(string id, string status, string? sapDocNum, string? sapResponse, string? errorMessage, bool incrementRetryCount = false)
     {
         var sql = @"
             UPDATE interface_logs
@@ -209,6 +220,7 @@ public class InterfaceMonitorService : IInterfaceMonitorService
                 sap_doc_num   = @SapDocNum,
                 sap_response  = @SapResponse,
                 error_message = @ErrorMessage,
+                retry_count   = CASE WHEN @IncrementRetryCount = 1 THEN retry_count + 1 ELSE retry_count END,
                 sent_at       = @SentAt,
                 updated_at    = @UpdatedAt
             WHERE id = @Id";
@@ -220,9 +232,64 @@ public class InterfaceMonitorService : IInterfaceMonitorService
             SapDocNum = sapDocNum,
             SapResponse = sapResponse,
             ErrorMessage = errorMessage,
+            IncrementRetryCount = incrementRetryCount ? 1 : 0,
             SentAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         });
+    }
+
+    public async Task<List<InterfaceLogDetailDto>> GetSendableLogsAsync(string interfaceType, IEnumerable<string>? docNos = null, int batchSize = 500)
+    {
+        batchSize = Math.Clamp(batchSize, 1, 1000);
+
+        var where = new List<string>
+        {
+            "l.is_deleted = 0",
+            "l.interface_type = @InterfaceType",
+            "l.status IN ('PENDING', 'RETRY')"
+        };
+        var param = new DynamicParameters();
+        param.Add("InterfaceType", interfaceType);
+
+        var docNoList = docNos?.Where(d => !string.IsNullOrWhiteSpace(d)).Select(d => d.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (docNoList is { Count: > 0 })
+        {
+            where.Add("l.pos_doc_no IN @DocNos");
+            param.Add("DocNos", docNoList);
+        }
+
+        param.Add("BatchSize", batchSize);
+
+        var sql = $@"
+            SELECT TOP (@BatchSize)
+                   l.id            AS Id,
+                   l.pos_doc_no    AS PosDocNo,
+                   l.pos_doc_date  AS PosDocDate,
+                   l.branch_code   AS BranchCode,
+                   COALESCE(CONVERT(NVARCHAR(100), sd.shopname), l.branch_name) AS BranchName,
+                   l.pos_id        AS PosId,
+                   l.card_code     AS CardCode,
+                   COALESCE(sm.salemodename, l.channel) AS Channel,
+                   l.interface_type AS InterfaceType,
+                   l.doc_total     AS DocTotal,
+                   l.sap_doc_num   AS SapDocNum,
+                   l.status        AS Status,
+                   l.error_message AS ErrorMessage,
+                   l.retry_count   AS RetryCount,
+                   l.sent_at       AS SentAt,
+                   l.created_at    AS CreatedAt,
+                   l.updated_at    AS UpdatedAt,
+                   l.pos_data      AS PosData,
+                   l.sap_request   AS SapRequest,
+                   l.sap_response  AS SapResponse
+            FROM interface_logs l
+            LEFT JOIN shop_data sd ON sd.shopcode = l.branch_code
+            LEFT JOIN salemode sm ON sm.SaleModeID = TRY_CAST(l.channel AS INT)
+            WHERE {string.Join(" AND ", where)}
+            ORDER BY l.created_at ASC";
+
+        var rows = await _db.QueryAsync<InterfaceLogDetailDto>(sql, param);
+        return rows.ToList();
     }
 
     public async Task<int> DeleteLogsByStatusAsync(IEnumerable<string>? docNos = null, IEnumerable<string>? statuses = null)
@@ -545,5 +612,28 @@ public class InterfaceMonitorService : IInterfaceMonitorService
         }
 
         return resolved;
+    }
+
+    public async Task EnsureScheduleConfigAsync()
+    {
+        var defaults = new (string Key, string Value, string Description)[]
+        {
+            (gbVar.CfgScheduleWindowStart,       "20:00",        "Daily start time (HH:mm) — empty = always"),
+            (gbVar.CfgScheduleWindowEnd,         "06:00",        "Daily end time (HH:mm) — overnight OK"),
+            (gbVar.CfgScheduleTimezone,          "Asia/Bangkok", "IANA or Windows timezone id"),
+            (gbVar.CfgScheduleMaxRuntimeMinutes, "240",          "Max continuous drain minutes per wake-up"),
+            (gbVar.CfgInterfaceCutoverDate,    "2026-06-01",   "First POS doc date to interface"),
+            (gbVar.CfgImportDateToMode,          "yesterday",    "Import up to: yesterday or today"),
+            (gbVar.CfgImportBatchSize,           "500",          "Max docs per import/send batch"),
+            (gbVar.CfgSapHttpTimeoutSeconds,     "90",           "SAP HTTP timeout per request (seconds)"),
+            (gbVar.CfgImportChunkDays,           "7",            "Split import queries by N-day chunks when range is wider"),
+        };
+
+        foreach (var (key, value, description) in defaults)
+        {
+            var existing = await GetConfigByKeyAsync(key);
+            if (existing is null)
+                await UpsertConfigAsync(key, value, description);
+        }
     }
 }

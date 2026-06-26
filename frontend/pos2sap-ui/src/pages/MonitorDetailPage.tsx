@@ -5,12 +5,12 @@ import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, RefreshCw, CheckCircle, Clock, Activity, XCircle, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import monitorService from '@/services/monitorService';
-import interfaceService from '@/services/interfaceService';
 import { StatusBadge } from '@/components/StatusBadge';
 import { JsonViewer } from '@/components/JsonViewer';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { fmtDate, fmtDatetime, fmt, cn } from '@/lib/utils';
+import { interfaceTypeLabel, resendInterfaceLog } from '@/lib/interfaceResend';
 
 type Tab = 'request' | 'response' | 'source';
 
@@ -40,11 +40,15 @@ export default function MonitorDetailPage() {
   });
 
   async function handleRetry() {
-    if (!id) return;
+    if (!id || !data) return;
     setRetrying(true);
     try {
-      await interfaceService.retryRecord(id);
-      toast.success(t('retrySuccess'));
+      const ok = await resendInterfaceLog(id, data.posDocNo, data.interfaceType);
+      if (ok) {
+        toast.success(t('retrySuccess'));
+      } else {
+        toast.error(t('retryError'));
+      }
       refetch();
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : t('retryError'));
@@ -123,6 +127,7 @@ export default function MonitorDetailPage() {
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         {[
           { label: t('posDocNo'), value: data.posDocNo },
+          { label: t('interfaceType'), value: interfaceTypeLabel(data.interfaceType, t) },
           { label: t('billDate'), value: fmtDate(data.posDocDate) },
           { label: t('branchLabel'), value: `${data.branchCode ?? '-'} ${data.branchName ?? ''}` },
           { label: t('channel'), value: data.channel ?? '-' },

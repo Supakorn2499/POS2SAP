@@ -38,7 +38,6 @@ public class ConfigController : ControllerBase
 
     /// <summary>Update a config value by key</summary>
     [HttpPut("{key}")]
-    [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<bool>>> Update(string key, [FromBody] UpdateConfigDto dto)
     {
         if (string.IsNullOrWhiteSpace(dto.ConfigValue) && !IsNullableKey(key))
@@ -50,9 +49,17 @@ public class ConfigController : ControllerBase
             : BadRequest(ApiResponse<bool>.Fail("บันทึกค่า config ไม่สำเร็จ"));
     }
 
-    // Allow empty value for credentials that might be intentionally cleared
+    // Allow empty value for credentials or optional schedule window (empty = 24h / no end)
     private static bool IsNullableKey(string key)
-        => key is gbVar.CfgSapApiKey or gbVar.CfgSapBasicUsername or gbVar.CfgSapBasicPassword;
+    {
+        var baseKey = key.Contains('.') ? key[(key.LastIndexOf('.') + 1)..] : key;
+
+        return baseKey is gbVar.CfgSapApiKey
+            or gbVar.CfgSapBasicUsername
+            or gbVar.CfgSapBasicPassword
+            or gbVar.CfgScheduleWindowStart
+            or gbVar.CfgScheduleWindowEnd;
+    }
 
     /// <summary>Test connectivity to SAP for a given interface (uses resolved config)</summary>
     [HttpPost("test")]

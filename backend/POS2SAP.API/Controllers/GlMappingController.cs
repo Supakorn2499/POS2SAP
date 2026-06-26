@@ -41,8 +41,26 @@ public class GlMappingController : ControllerBase
         if (dto.PayTypeID <= 0)
             return BadRequest(ApiResponse<bool>.Fail("PayTypeID is required"));
 
+        var category = (dto.SapPayCategory ?? "").Trim().ToUpperInvariant();
+        var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { "CASH", "TRANSFER", "CREDIT_CARD", "SKIP" };
+        if (!allowed.Contains(category))
+            return BadRequest(ApiResponse<bool>.Fail("SapPayCategory must be CASH, TRANSFER, CREDIT_CARD, or SKIP"));
+
+        dto.SapPayCategory = category;
+
+        if (category != "SKIP")
+        {
+            var gl = dto.SapGlAccount?.Trim();
+            if (string.IsNullOrEmpty(gl) || gl.Equals("[GL-PENDING]", StringComparison.OrdinalIgnoreCase))
+                return BadRequest(ApiResponse<bool>.Fail("SapGlAccount is required and cannot be [GL-PENDING]"));
+
+            if (category == "CREDIT_CARD" && string.IsNullOrWhiteSpace(dto.SapPayTypeName))
+                return BadRequest(ApiResponse<bool>.Fail("SapPayTypeName is required for CREDIT_CARD category"));
+        }
+
         var ok = await _svc.UpsertMappingAsync(dto);
-        return Ok(ApiResponse<bool>.Ok(ok));
+        return Ok(ApiResponse<bool>.Ok(ok, "บันทึก GL Mapping สำเร็จ"));
     }
 
     /// <summary>Delete a GL mapping row by PayTypeID</summary>

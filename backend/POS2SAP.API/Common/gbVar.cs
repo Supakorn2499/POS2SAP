@@ -18,6 +18,9 @@ public static class gbVar
     public const decimal SapVatPrcnt  = 7m;
     public const string SapOcrCode2   = "CENTER";
 
+    // Delivery line — SAP spec uses 'CEN' (differs from AR Invoice)
+    public const string SapDeliveryOcrCode2 = "CEN";
+
     // Config keys
     public const string CfgSapUrlTest              = "sap_url_test";
     public const string CfgSapUrlProd              = "sap_url_prod";
@@ -26,8 +29,25 @@ public static class gbVar
     public const string CfgSapApiKey               = "sap_api_key";
     public const string CfgSapBasicUsername        = "sap_basic_username";
     public const string CfgSapBasicPassword        = "sap_basic_password";
-    public const string CfgScheduleIntervalMinutes = "schedule_interval_minutes";
-    public const string CfgScheduleEnabled         = "schedule_enabled";
-    public const string CfgMaxRetryCount           = "max_retry_count";
-    public const string CfgImportBatchSize         = "import_batch_size";
+    public const string CfgScheduleIntervalMinutes   = "schedule_interval_minutes";
+    public const string CfgScheduleEnabled           = "schedule_enabled";
+    public const string CfgScheduleWindowStart       = "schedule_window_start";
+    public const string CfgScheduleWindowEnd         = "schedule_window_end";
+    public const string CfgScheduleTimezone          = "schedule_timezone";
+    public const string CfgScheduleMaxRuntimeMinutes = "schedule_max_runtime_minutes";
+    public const string CfgInterfaceCutoverDate      = "interface_cutover_date";
+    public const string CfgImportDateToMode          = "import_date_to_mode";
+    public const string CfgMaxRetryCount             = "max_retry_count";
+    public const string CfgImportBatchSize           = "import_batch_size";
+    public const string CfgSapHttpTimeoutSeconds     = "sap_http_timeout_seconds";
+    public const string CfgImportChunkDays           = "import_chunk_days";
+
+    // Product group mapping placeholder
+    public const string SapItemGroupPending        = "[SAP-PENDING]";
+
+    // Incoming Payment — paytype_gl_mapping.SapPayCategory
+    public const string SapPayCategoryCash        = "CASH";
+    public const string SapPayCategoryTransfer    = "TRANSFER";
+    public const string SapPayCategoryCreditCard  = "CREDIT_CARD";
+    public const string SapPayCategorySkip        = "SKIP";
 }

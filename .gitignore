@@ -156,6 +156,8 @@ backend/POS2SAP.API/logs/
 *.log
 
 # Local build/run output captures
+backend/POS2SAP.API/wwwroot/
+backend/POS2SAP.API/appsettings.Production.json
 backend/POS2SAP.API/build_output.txt
 backend/POS2SAP.API/build-output.txt
 backend/POS2SAP.API/dotnet-run-output.txt

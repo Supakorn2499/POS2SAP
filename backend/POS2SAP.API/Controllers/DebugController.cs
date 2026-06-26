@@ -1,24 +1,31 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using POS2SAP.API.Common;
 using POS2SAP.API.Services.Interfaces;
 
 namespace POS2SAP.API.Controllers;
 
+/// <summary>Development-only helpers. Returns 404 outside Development environment.</summary>
 [ApiController]
 [Route("api/debug")]
+[Authorize]
 public class DebugController : ControllerBase
 {
     private readonly IInterfaceMonitorService _monitor;
+    private readonly IWebHostEnvironment _env;
 
-    public DebugController(IInterfaceMonitorService monitor)
+    public DebugController(IInterfaceMonitorService monitor, IWebHostEnvironment env)
     {
         _monitor = monitor;
+        _env     = env;
     }
 
-    // Temporary public endpoint for testing config upsert
     [HttpPut("config/{key}")]
     public async Task<ActionResult<ApiResponse<bool>>> UpsertConfig(string key, [FromBody] object body)
     {
+        if (!_env.IsDevelopment())
+            return NotFound();
+
         try
         {
             var dict = body as System.Text.Json.JsonElement?;

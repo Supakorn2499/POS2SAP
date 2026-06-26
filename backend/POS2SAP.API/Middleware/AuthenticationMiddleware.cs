@@ -60,17 +60,13 @@ public class AuthorizationMiddleware
     private readonly RequestDelegate _next;
     private readonly ILogger<AuthorizationMiddleware> _logger;
 
-    // Routes that don't require authentication
-        private static readonly string[] PublicRoutes = new[]
-        {
-            "/api/auth/login",
-            "/api/auth/refresh",
-            "/api/interface/upload",
-            "/api/config",
-            "/api/debug",
-            "/swagger",
-            "/health"
-        };
+    // Only auth endpoints and health check are public. Swagger is dev-only (see Program.cs).
+    private static readonly string[] PublicRoutes =
+    [
+        "/api/auth/login",
+        "/api/auth/refresh",
+        "/health"
+    ];
 
     public AuthorizationMiddleware(RequestDelegate next, ILogger<AuthorizationMiddleware> logger)
     {
@@ -82,14 +78,12 @@ public class AuthorizationMiddleware
     {
         var path = context.Request.Path.Value?.ToLower() ?? "";
 
-        // Check if route is public
-        if (IsPublicRoute(path))
+        if (IsPublicRoute(path) || IsSwaggerRoute(path) || IsSpaStaticRoute(path))
         {
             await _next(context);
             return;
         }
 
-        // Check if user is authenticated
         if (context.User?.Identity?.IsAuthenticated != true)
         {
             _logger.LogWarning("Unauthorized access attempt to {Path}", path);
@@ -101,8 +95,13 @@ public class AuthorizationMiddleware
         await _next(context);
     }
 
-    private static bool IsPublicRoute(string path)
-    {
-        return PublicRoutes.Any(route => path.Contains(route, StringComparison.OrdinalIgnoreCase));
-    }
+    private static bool IsPublicRoute(string path) =>
+        PublicRoutes.Any(route => path.StartsWith(route, StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsSwaggerRoute(string path) =>
+        path.StartsWith("/swagger", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Production UI (wwwroot) — login page and assets are public; /api stays protected.</summary>
+    private static bool IsSpaStaticRoute(string path) =>
+        !path.StartsWith("/api", StringComparison.OrdinalIgnoreCase);
 }

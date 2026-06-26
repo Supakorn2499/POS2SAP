@@ -13,7 +13,11 @@ public interface IInterfaceMonitorService
     Task<string> InsertLogAsync(InterfaceLog log);
     Task UpdateStatusAsync(string id, string status, string? errorMessage = null);
     Task UpdateSapRequestAsync(string id, string? sapRequest);
-    Task UpdateSapResponseAsync(string id, string status, string? sapDocNum, string? sapResponse, string? errorMessage);
+    Task UpdatePosDataAsync(string id, string? posData);
+    Task UpdateSapResponseAsync(string id, string status, string? sapDocNum, string? sapResponse, string? errorMessage, bool incrementRetryCount = false);
+
+    /// <summary>Returns PENDING/RETRY logs ready to send for the given interface type (e.g. "AR").</summary>
+    Task<List<InterfaceLogDetailDto>> GetSendableLogsAsync(string interfaceType, IEnumerable<string>? docNos = null, int batchSize = 500);
     /// <summary>Hard-delete logs whose status is in <paramref name="statuses"/> (default: PENDING, RETRY).
     /// If <paramref name="docNos"/> is provided, only matching pos_doc_no rows are deleted.</summary>
     Task<int> DeleteLogsByStatusAsync(IEnumerable<string>? docNos = null, IEnumerable<string>? statuses = null);
@@ -40,4 +44,7 @@ public interface IInterfaceMonitorService
     Task<bool> UpdateConfigAsync(string key, string value);
     Task<bool> UpsertConfigAsync(string key, string value, string? description = null, bool isActive = true);
     Task<Dictionary<string, string>> GetConfigDictAsync(string? interfaceType = null);
+
+    /// <summary>Insert default schedule/cutover config rows if missing (idempotent).</summary>
+    Task EnsureScheduleConfigAsync();
 }

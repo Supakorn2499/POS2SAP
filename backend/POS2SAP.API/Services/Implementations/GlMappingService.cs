@@ -25,7 +25,7 @@ public class GlMappingService : IGlMappingService
                 CAST(glm.IsActive AS BIT) AS IsActive,
                 glm.SortOrder, glm.Remarks, glm.UpdatedAt
             FROM paytype_gl_mapping glm
-            LEFT JOIN paytype p ON p.PayTypeID = glm.PayTypeID
+            INNER JOIN paytype p ON p.PayTypeID = glm.PayTypeID AND ISNULL(p.Deleted, 0) = 0
             ORDER BY glm.SortOrder, glm.PayTypeID";
 
         await using var conn = new SqlConnection(gbVar.MainConstr);
@@ -38,7 +38,8 @@ public class GlMappingService : IGlMappingService
         const string sql = @"
             SELECT p.PayTypeID, p.PayTypeName
             FROM paytype p
-            WHERE NOT EXISTS (
+            WHERE ISNULL(p.Deleted, 0) = 0
+              AND NOT EXISTS (
                 SELECT 1 FROM paytype_gl_mapping glm WHERE glm.PayTypeID = p.PayTypeID
             )
             ORDER BY p.PayTypeID";

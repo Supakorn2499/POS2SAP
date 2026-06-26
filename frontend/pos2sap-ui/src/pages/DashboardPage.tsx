@@ -1,13 +1,13 @@
 // src/pages/DashboardPage.tsx
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Clock, CheckCircle, XCircle, RefreshCw, Activity, Play, Download, MoreHorizontal } from 'lucide-react';
+import { Clock, CheckCircle, XCircle, RefreshCw, Activity } from 'lucide-react';
 import { toast } from 'sonner';
 import { useLanguage } from '@/contexts/LanguageContext';
 import dashboardService from '@/services/dashboardService';
-import interfaceService from '@/services/interfaceService';
 import monitorService from '@/services/monitorService';
+import { resendInterfaceLog } from '@/lib/interfaceResend';
 import { StatCard } from '@/components/StatCard';
 import { StatusBadge } from '@/components/StatusBadge';
 import type { BranchOptionDto, InterfaceLogDto, PagedResult } from '@/types/monitor';
@@ -82,12 +82,17 @@ function RecentLogsCard({
   const [resendingId, setResendingId] = useState<string | null>(null);
 
   const { mutate: resendMutation } = useMutation({
-    mutationFn: (id: string) => interfaceService.retryRecord(id),
-    onSuccess: (_, id) => {
-      toast.success(t('logResendSuccess', { id }));
-      onResendSuccess();
+    mutationFn: ({ id, posDocNo, interfaceType }: { id: string; posDocNo: string; interfaceType?: string }) =>
+      resendInterfaceLog(id, posDocNo, interfaceType),
+    onSuccess: (ok, { id }) => {
+      if (ok) {
+        toast.success(t('logResendSuccess', { id }));
+        onResendSuccess();
+      } else {
+        toast.error(t('resendFailed', { id }));
+      }
     },
-    onError: (err: unknown, id) => {
+    onError: (err: unknown, { id }) => {
       toast.error(`${t('resendFailed', { id })}: ${err instanceof Error ? err.message : 'Unknown error'}`);
     },
     onSettled: () => {
@@ -95,9 +100,9 @@ function RecentLogsCard({
     },
   });
 
-  const handleResend = (id: string) => {
-    setResendingId(id);
-    resendMutation(id);
+  const handleResend = (log: InterfaceLogDto) => {
+    setResendingId(log.id);
+    resendMutation({ id: log.id, posDocNo: log.posDocNo, interfaceType: log.interfaceType });
   };
   
   return (
@@ -167,7 +172,7 @@ function RecentLogsCard({
                         <>
                           <span className="text-muted-foreground">|</span>
                           <button
-                            onClick={() => handleResend(log.id)}
+                            onClick={() => handleResend(log)}
                             disabled={resendingId === log.id}
                             className="text-orange-600 hover:underline text-xs disabled:opacity-50"
                           >
@@ -214,8 +219,6 @@ function RecentLogsCard({
 // =================================================================
 export default function DashboardPage() {
   const { t } = useLanguage();
-  const [triggering, setTriggering] = useState(false);
-  const [importing, setImporting] = useState(false);
   const [monthOffset, setMonthOffset] = useState(0);
   const [interfaceType, setInterfaceType] = useState('ARInvoice');
   const [branchFilter, setBranchFilter] = useState('');
@@ -229,30 +232,12 @@ export default function DashboardPage() {
     retry: 1,
   });
 
-  const { data, isLoading, isError, refetch } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ['dashboard', monthOffset, interfaceType],
     queryFn: () => dashboardService.getDashboard(monthOffset, interfaceType),
     staleTime: 60_000,
     retry: 1,
   });
-
-  useEffect(() => {
-    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      // Chrome requires returnValue to be set.
-      event.returnValue = '';
-    };
-
-    if (importing) {
-      window.addEventListener('beforeunload', handleBeforeUnload);
-    } else {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-    }
-
-    return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-    };
-  }, [importing]);
 
   const getDateRange = (offset: number) => {
     const now = new Date();
@@ -290,40 +275,6 @@ export default function DashboardPage() {
   const counts = data?.counts;
   const monthLabel = monthOffset === 0 ? t('currentMonth') : t('lastMonth');
 
-  async function handleTrigger() {
-    setTriggering(true);
-    try {
-      const result = await interfaceService.triggerManualFor(interfaceType);
-      toast.success(t('triggerSuccess', { sent: result.sent }));
-      refetch();
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : t('triggerError'));
-    } finally {
-      setTriggering(false);
-    }
-  }
-
-  async function handleImport() {
-    setImporting(true);
-    try {
-      const result = await interfaceService.importPreview(undefined, interfaceType);
-      if (result.error && result.fetched === 0) {
-        toast.error(`${t('importError')}: ${result.error}`);
-      } else if (result.fetched === 0) {
-        toast.info(t('importNoData'));
-      } else if (result.imported === 0) {
-        toast.info(t('importAllImported', { fetched: result.fetched }));
-      } else {
-        toast.success(`${t('importSuccess', { fetched: result.fetched, imported: result.imported })}`);
-      }
-      refetch();
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : t('importError'));
-    } finally {
-      setImporting(false);
-    }
-  }
-
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -353,26 +304,6 @@ export default function DashboardPage() {
             {t('lastMonth')}
             </button>
           </div>
-          <button
-            onClick={handleImport}
-            disabled={importing}
-            className="flex items-center gap-2 rounded-lg border border-green-500 px-4 py-2 text-sm font-medium text-green-700 hover:bg-green-50 disabled:opacity-50"
-          >
-            {importing ? (
-              <RefreshCw className="h-4 w-4 animate-spin" />
-            ) : (
-              <Download className="h-4 w-4" />
-            )}
-            {importing ? t('importing') : t('importFromPOS')}
-          </button>
-          <button
-            onClick={handleTrigger}
-            disabled={triggering}
-            className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-          >
-            <Play className="h-4 w-4" />
-            {triggering ? t('triggerAllSending') : t('triggerAll')}
-          </button>
         </div>
       </div>
       

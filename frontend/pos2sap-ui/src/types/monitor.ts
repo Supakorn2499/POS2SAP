@@ -11,6 +11,7 @@ export interface InterfaceLogDto {
   posId?: string;
   cardCode?: string;
   channel?: string;
+  interfaceType?: string;
   docTotal?: number;
   sapDocNum?: string;
   status: InterfaceStatus;

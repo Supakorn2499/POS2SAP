@@ -1,95 +1,72 @@
-# 🔧 Database Setup Instructions
+# Database Setup Instructions
 
-## Initialize Test Users
+## Staff login (use existing POS users)
 
-Before running the application, you need to seed test users into the `staffs` table with bcrypt-hashed passwords.
+POS2SAP shares the **`staffs`** table with the POS system on `HQ_FAMTIME`.
 
-### Step 1: Run SQL Seed Script
+**Do not INSERT new rows into `staffs` from this project.**  
+`StaffID` is **not** an identity column — inserts without `StaffID` can create invalid rows with `StaffID = 0`.
 
-Execute the following SQL script on your **HQ_FAMTIME** database:
+Login flow (`AuthController`) only:
 
-```bash
-sqlcmd -S your-server-name -d HQ_FAMTIME -i backend/POS2SAP.API/sql/seed-staffs.sql
+1. `SELECT` from `staffs` by `StaffLogin`
+2. Verify password (BCrypt or legacy SHA1)
+3. Optionally `UPDATE StaffPassword` when upgrading SHA1 → BCrypt
+
+There is **no** code path that creates staff on login.
+
+### Use an existing account
+
+Example: `StaffLogin = 'vtec'` with your POS password.
+
+Requirements:
+
+- `Activated = 1`
+- `Deleted = 0`
+- Valid `StaffPassword` (BCrypt or legacy SHA1)
+
+### Remove accidental test rows
+
+If `seed-staffs.sql` was run on a shared database in the past, you may have test users with `StaffID = 0`:
+
+```sql
+-- Review first
+SELECT StaffID, StaffLogin, StaffFirstName FROM staffs WHERE StaffID = 0;
+
+-- Remove only test logins (adjust list as needed)
+DELETE FROM staffs WHERE StaffID = 0 AND StaffLogin IN ('admin', 'user1');
 ```
 
-Or use SQL Server Management Studio (SSMS) and run the script directly:
-- File: `backend/POS2SAP.API/sql/seed-staffs.sql`
+## Auth schema (POS2SAP tables only)
 
-### Step 2: Test Users Created
-
-After running the seed script, the following test users will be available:
-
-| Username | Password     | Role        |
-|----------|--------------|-------------|
-| `admin`  | `Password@123` | Administrator |
-| `user1`  | `User1@123`    | Regular User |
-
-### Step 3: Restart Backend
-
-After seeding, restart the backend server:
+Run on `HQ_FAMTIME` to ensure `refresh_tokens` and `staffs.UpdatedAt` exist:
 
 ```bash
-cd backend/POS2SAP.API
-dotnet run
+sqlcmd -S your-server-name -d HQ_FAMTIME -i backend/POS2SAP.API/sql/ensure_auth_schema.sql
 ```
 
-### Step 4: Test Login
+Or: `backend/POS2SAP.API/scripts/run_db_setup.ps1`
 
-1. Navigate to `http://localhost:5174` (frontend)
-2. Login with:
-   - Username: `admin`
-   - Password: `Password@123`
+Main interface tables: `backend/POS2SAP.API/sql/init.sql`
 
 ## Troubleshooting
 
-### Error: "Invalid salt version"
+### "Invalid salt version"
 
-This error occurs when the BCrypt hash format is incorrect in the database.
+Password hash in `staffs` may be corrupt. Re-hash with BCrypt for that existing row only (do not insert a new staff row).
 
-**Solution:** Run the seed script above to update the password hashes.
+### "Unauthorized" after login
 
-### Error: "Unauthorized"
+1. Check JWT in browser `localStorage['pos2sapToken']`
+2. Ensure `Jwt:Secret` is set in `appsettings.Development.json` or `JWT__Secret` env var
 
-This error means the JWT token is not being sent properly.
-
-**Solution:** 
-1. Ensure you're logged in (check if token is in localStorage)
-2. Clear browser cache: `localStorage.clear()`
-3. Restart the frontend: `npm run dev`
-
-### Database Connection Failed
-
-Ensure the connection string in `appsettings.json` is correct:
-
-```json
-{
-  "ConnectionStrings": {
-    "DefaultConnection": "Server=YOUR_SERVER;Database=HQ_FAMTIME;User Id=YOUR_USER;Password=YOUR_PASSWORD;"
-  }
-}
-```
-
-## Generate New BCrypt Hashes
-
-If you need to create additional test users, use the following to generate bcrypt hashes:
-
-### Using .NET (C#)
+### Generate BCrypt for an existing user (UPDATE only)
 
 ```csharp
 using BCrypt.Net;
-
-string password = "YourPassword@123";
-string hash = BCrypt.Net.BCrypt.HashPassword(password, 12);
-Console.WriteLine(hash);
+string hash = BCrypt.Net.BCrypt.HashPassword("your-password", 11);
 ```
 
-### Using Online Tool
-
-Visit: https://bcrypt-generator.com/ (for development only)
-
-Then add to `seed-staffs.sql`:
-
 ```sql
-INSERT INTO staffs (StaffLogin, StaffPassword, StaffFirstName, StaffLastName)
-VALUES ('newuser', 'YOUR_BCRYPT_HASH_HERE', 'First', 'Last');
+UPDATE staffs SET StaffPassword = @hash, UpdatedAt = GETDATE() WHERE StaffLogin = 'vtec';
 ```

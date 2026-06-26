@@ -19,13 +19,20 @@ public class InterfaceController : ControllerBase
     private readonly ILogger<InterfaceController> _logger;
     private readonly IInterfaceMonitorService _monitor;
     private readonly IPosDataService _posData;
+    private readonly IWebHostEnvironment _env;
 
-    public InterfaceController(IInterfaceJobService job, IInterfaceMonitorService monitor, IPosDataService posData, ILogger<InterfaceController> logger)
+    public InterfaceController(
+        IInterfaceJobService job,
+        IInterfaceMonitorService monitor,
+        IPosDataService posData,
+        ILogger<InterfaceController> logger,
+        IWebHostEnvironment env)
     {
         _job     = job;
         _monitor = monitor;
         _posData = posData;
         _logger  = logger;
+        _env     = env;
     }
 
     /// <summary>Manual trigger — send all PENDING/RETRY or specific docNos</summary>
@@ -33,7 +40,7 @@ public class InterfaceController : ControllerBase
     public async Task<ActionResult<ApiResponse<TriggerResultDto>>> Trigger([FromBody] TriggerRequestDto? request)
     {
         _logger.LogInformation("Manual trigger requested, docNos={Count}", request?.DocNos?.Count ?? 0);
-        var (sent, failed) = await _job.TriggerManualAsync(request?.DocNos);
+        var (sent, failed) = await _job.TriggerManualAsync(request?.DocNos, request?.InterfaceType);
         var result = new TriggerResultDto { Sent = sent, Failed = failed, Total = sent + failed };
         return Ok(ApiResponse<TriggerResultDto>.Ok(result, $"ส่งสำเร็จ {sent} รายการ, ล้มเหลว {failed} รายการ"));
     }
@@ -72,6 +79,9 @@ public class InterfaceController : ControllerBase
             return BadRequest(ApiResponse<List<ImportPreviewItemDto>>.Fail("DateTo ไม่ถูกต้อง (ใช้รูปแบบ yyyy-MM-dd)"));
         if (dateFrom > dateTo)
             return BadRequest(ApiResponse<List<ImportPreviewItemDto>>.Fail("DateFrom ต้องไม่มากกว่า DateTo"));
+
+        var configDict = await _monitor.GetConfigDictAsync();
+        (dateFrom, dateTo) = ScheduleConfigHelper.ClampImportRange(configDict, dateFrom, dateTo);
 
         var batchSize = Math.Clamp(request.BatchSize <= 0 ? 500 : request.BatchSize, 1, 1000);
         var dbInterfaceType = request.InterfaceType.Trim().ToUpper() switch
@@ -121,7 +131,42 @@ public class InterfaceController : ControllerBase
                 $"พบ {payResult.Count} รายการ ({newPayCount} รายการใหม่, {payResult.Count - newPayCount} นำเข้าแล้ว)"));
         }
 
-        // ── AR Invoice (default) ──
+        // ── Delivery ──
+        if (dbInterfaceType == "DL")
+        {
+            List<SapDeliveryDto> deliveries;
+            try
+            {
+                deliveries = await _posData.GetDeliveriesByFilterAsync(dateFrom, dateTo, request.BranchCode, batchSize);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "PreviewImport DL: failed to fetch from POS");
+                return StatusCode(500, ApiResponse<List<ImportPreviewItemDto>>.Fail("ดึงข้อมูล Delivery จาก POS ไม่สำเร็จ: " + ex.Message));
+            }
+
+            if (!deliveries.Any())
+                return Ok(ApiResponse<List<ImportPreviewItemDto>>.Ok(new List<ImportPreviewItemDto>(), "ไม่พบข้อมูลใน POS ตามเงื่อนไขที่กำหนด"));
+
+            var dlDocNos  = deliveries.Select(d => d.DocNum).ToList();
+            var alreadyDl = await _monitor.GetImportedDocNosAsync(dlDocNos, "DL");
+
+            var dlResult = deliveries.Select(d => new ImportPreviewItemDto
+            {
+                DocNum          = d.DocNum,
+                DocDate         = d.DocDate,
+                BranchCode      = d.BranchCode,
+                BranchName      = d.BranchName,
+                DocTotal        = d.DocumentLines.Sum(l => decimal.TryParse(l.Quantity, out var q) ? q : 0m),
+                AlreadyImported = alreadyDl.Contains(d.DocNum)
+            }).ToList();
+
+            var newDlCount = dlResult.Count(r => !r.AlreadyImported);
+            return Ok(ApiResponse<List<ImportPreviewItemDto>>.Ok(dlResult,
+                $"พบ {dlResult.Count} รายการ ({newDlCount} รายการใหม่, {dlResult.Count - newDlCount} นำเข้าแล้ว)"));
+        }
+
+        // ── AR Invoice ──
         List<SapArInvoiceHeadDto> bills;
         try
         {
@@ -173,10 +218,12 @@ public class InterfaceController : ControllerBase
         return Ok(ApiResponse<TriggerResultDto>.Ok(result, $"ส่งสำเร็จ {sent} รายการ, ล้มเหลว {failed} รายการ"));
     }
 
+    /// <summary>DEV ONLY: accept raw AR JSON and create a PENDING log (Development environment only).</summary>
     [HttpPost("upload")]
-    [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<object>>> UploadRaw([FromBody] JsonElement body)
     {
+        if (!_env.IsDevelopment())
+            return NotFound();
         try
         {
             var json = body.GetRawText();

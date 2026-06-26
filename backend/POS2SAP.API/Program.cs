@@ -12,6 +12,9 @@ using AspNetCoreRateLimit;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Run as Windows Service when installed on server (install.ps1)
+builder.Host.UseWindowsService();
+
 // ------------------------------------------------------------------ Serilog
 builder.Host.UseSerilog((ctx, cfg) =>
     cfg.ReadFrom.Configuration(ctx.Configuration)
@@ -29,9 +32,22 @@ gbVar.MainConstr = connectionString;
 var jwtSettings = new JwtSettings();
 builder.Configuration.GetSection("Jwt").Bind(jwtSettings);
 
-if (string.IsNullOrEmpty(jwtSettings.Secret) || jwtSettings.Secret == "your-very-long-secret-key-at-least-32-characters-for-hs256")
+const string placeholderSecret = "your-very-long-secret-key-at-least-32-characters-for-hs256";
+const string devOnlySecret     = "dev-secret-key-minimum-32-characters-for-dev-only-CHANGE-IN-PRODUCTION";
+
+if (string.IsNullOrWhiteSpace(jwtSettings.Secret) || jwtSettings.Secret.Length < 32)
 {
-    throw new InvalidOperationException("JWT Secret is not configured properly. Update appsettings.json with a secure secret.");
+    throw new InvalidOperationException(
+        "JWT Secret is required (minimum 32 characters). " +
+        "Set Jwt:Secret in appsettings.Development.json for local dev, or JWT__Secret environment variable for production.");
+}
+
+if (!builder.Environment.IsDevelopment() &&
+    (jwtSettings.Secret == placeholderSecret || jwtSettings.Secret == devOnlySecret))
+{
+    throw new InvalidOperationException(
+        "JWT Secret must not use a placeholder value in non-Development environments. " +
+        "Set JWT__Secret to a secure random string (32+ characters).");
 }
 
 builder.Services.AddSingleton(jwtSettings);
@@ -77,29 +93,34 @@ builder.Services.AddScoped<IInterfaceMonitorService, InterfaceMonitorService>();
 builder.Services.AddScoped<IPosDataService, PosDataService>();
 builder.Services.AddScoped<IInterfaceJobService, InterfaceJobService>();
 builder.Services.AddScoped<IGlMappingService, GlMappingService>();
+builder.Services.AddScoped<IProductGroupMappingService, ProductGroupMappingService>();
+builder.Services.AddScoped<IDeliveryDocTypeService, DeliveryDocTypeService>();
 
 // ------------------------------------------------------------------ Services — Background Job
 builder.Services.AddHostedService<InterfaceJobService>();
 
 // ------------------------------------------------------------------ HttpClient — SAP AR Invoice
+// HttpClient ceiling — per-request timeout from interface_configs (sap_http_timeout_seconds)
 builder.Services.AddHttpClient<ISapArInvoiceService, SapArInvoiceService>(client =>
 {
-    client.Timeout = TimeSpan.FromSeconds(30);
+    client.Timeout = TimeSpan.FromSeconds(SapHttpHelper.MaxTimeoutSeconds);
 });
 
-// ------------------------------------------------------------------ HttpClient — SAP Incoming Payment
 builder.Services.AddHttpClient<ISapIncomingPaymentService, SapIncomingPaymentService>(client =>
 {
-    client.Timeout = TimeSpan.FromSeconds(30);
+    client.Timeout = TimeSpan.FromSeconds(SapHttpHelper.MaxTimeoutSeconds);
+});
+
+builder.Services.AddHttpClient<ISapDeliveryService, SapDeliveryService>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(SapHttpHelper.MaxTimeoutSeconds);
 });
 
 // ------------------------------------------------------------------ Rate Limiting
-// builder.Services.AddMemoryCache();
-// builder.Services.Configure<IpRateLimitOptions>(builder.Configuration.GetSection("RateLimit"));
-// builder.Services.AddSingleton<IIpPolicyStore, MemoryIpPolicyStore>();
-// builder.Services.AddSingleton<IRateLimitCounterStore, MemoryRateLimitCounterStore>();
-// builder.Services.AddSingleton<IRateLimitConfiguration, RateLimitConfiguration>();
-// builder.Services.AddSingleton<IProcessingStrategy, AsyncKeyValueProcessingStrategy>();
+builder.Services.AddMemoryCache();
+builder.Services.Configure<IpRateLimitOptions>(builder.Configuration.GetSection("IpRateLimiting"));
+builder.Services.AddSingleton<IRateLimitConfiguration, RateLimitConfiguration>();
+builder.Services.AddInMemoryRateLimiting();
 
 // ------------------------------------------------------------------ CORS
 builder.Services.AddCors(options =>
@@ -153,7 +174,16 @@ builder.Services.AddControllers();
 // ------------------------------------------------------------------ Build
 var app = builder.Build();
 
+var wwwrootPath = Path.Combine(app.Environment.ContentRootPath, "wwwroot");
+var serveSpa = Directory.Exists(wwwrootPath);
+
 app.UseSerilogRequestLogging();
+
+if (serveSpa)
+{
+    app.UseDefaultFiles();
+    app.UseStaticFiles();
+}
 
 if (app.Environment.IsDevelopment())
 {
@@ -161,7 +191,8 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "POS2SAP API v1"));
 }
 
-// app.UseIpRateLimiting();
+// app.UseIpRateLimiting() must run before auth middleware
+app.UseIpRateLimiting();
 app.UseCors("AllowFrontend");
 
 // Custom middleware
@@ -171,12 +202,25 @@ app.UseMiddleware<AuthorizationMiddleware>();
 app.UseAuthentication();
 app.UseAuthorization();
 
+app.MapGet("/health", () => Results.Ok(new { status = "healthy", utc = DateTime.UtcNow }));
 app.MapControllers();
 
-app.Run();
-
-record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
+if (serveSpa)
 {
-    public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
+    app.MapFallbackToFile("index.html");
 }
 
+// Ensure POS→SAP mapping tables exist (idempotent; safe on every startup)
+using (var scope = app.Services.CreateScope())
+{
+    var pgMapping = scope.ServiceProvider.GetRequiredService<IProductGroupMappingService>();
+    await pgMapping.EnsureSchemaAsync();
+
+    var dlDocTypes = scope.ServiceProvider.GetRequiredService<IDeliveryDocTypeService>();
+    await dlDocTypes.EnsureSchemaAsync();
+
+    var monitor = scope.ServiceProvider.GetRequiredService<IInterfaceMonitorService>();
+    await monitor.EnsureScheduleConfigAsync();
+}
+
+app.Run();
