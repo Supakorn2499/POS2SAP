@@ -55,7 +55,7 @@ public class AuthController : ControllerBase
             return Unauthorized(ApiResponse<LoginResultDto>.Fail("Username หรือ password ไม่ถูกต้อง", statusCode: 401));
         }
 
-        // Verify password — supports BCrypt (new) and SHA1 legacy hashes (auto-upgrade on success)
+        // Verify password only — BCrypt or legacy SHA1 from POS (read-only; never UPDATE staffs)
         var storedHash = (string?)user.StaffPassword;
         if (string.IsNullOrEmpty(storedHash))
         {
@@ -64,18 +64,13 @@ public class AuthController : ControllerBase
         }
 
         bool passwordValid;
-        bool isLegacyHash = !storedHash.StartsWith("$2", StringComparison.Ordinal);
+        var isLegacyHash = !storedHash.StartsWith("$2", StringComparison.Ordinal);
 
         try
         {
-            if (isLegacyHash)
-            {
-                passwordValid = VerifyLegacySha1(request.StaffPassword, storedHash);
-            }
-            else
-            {
-                passwordValid = BCrypt.Net.BCrypt.Verify(request.StaffPassword, storedHash);
-            }
+            passwordValid = isLegacyHash
+                ? VerifyLegacySha1(request.StaffPassword, storedHash)
+                : BCrypt.Net.BCrypt.Verify(request.StaffPassword, storedHash);
         }
         catch (Exception ex)
         {
@@ -87,24 +82,6 @@ public class AuthController : ControllerBase
         {
             _logger.LogWarning("Login attempt failed: invalid password - {StaffLogin}", request.StaffLogin);
             return Unauthorized(ApiResponse<LoginResultDto>.Fail("Username หรือ password ไม่ถูกต้อง", statusCode: 401));
-        }
-
-        // Upgrade legacy SHA1 hash → BCrypt on successful login
-        if (isLegacyHash)
-        {
-            try
-            {
-                var newHash = BCrypt.Net.BCrypt.HashPassword(request.StaffPassword, workFactor: 11);
-                await _dbConnection.ExecuteAsync(
-                    "UPDATE staffs SET StaffPassword = @NewHash, UpdatedAt = GETDATE() WHERE StaffLogin = @StaffLogin",
-                    new { NewHash = newHash, StaffLogin = (string)user.StaffLogin });
-                _logger.LogInformation("Upgraded legacy password hash to BCrypt for {StaffLogin}", request.StaffLogin);
-            }
-            catch (Exception ex)
-            {
-                // Non-fatal: login still succeeds even if upgrade fails
-                _logger.LogWarning(ex, "Failed to upgrade legacy hash for {StaffLogin}", request.StaffLogin);
-            }
         }
 
         // Generate tokens
@@ -220,11 +197,6 @@ public class AuthController : ControllerBase
             _logger.LogError(ex, "Error verifying refresh token");
             return null;
         }
-    }
-
-    private static string HashPassword(string password)
-    {
-        return BCrypt.Net.BCrypt.HashPassword(password, workFactor: 11);
     }
 
     /// <summary>
