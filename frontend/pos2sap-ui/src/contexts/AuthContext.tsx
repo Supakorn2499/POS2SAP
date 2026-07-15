@@ -14,12 +14,20 @@ export function AuthProvider({ children }: PropsWithChildren) {
     () => localStorage.getItem('pos2sapAuth') === 'true' && !!localStorage.getItem('pos2sapToken')
   );
   const [username, setUsername] = useState<string | null>(
-    () => localStorage.getItem('pos2sapUser')
+    () => {
+      const raw = localStorage.getItem('pos2sapUser');
+      if (!raw) return null;
+      try {
+        const parsed = JSON.parse(raw);
+        return typeof parsed === 'object' && parsed?.staffLogin ? String(parsed.staffLogin) : raw;
+      } catch {
+        return raw;
+      }
+    }
   );
 
   const login = (user: string) => {
     localStorage.setItem('pos2sapAuth', 'true');
-    localStorage.setItem('pos2sapUser', user);
     setAuthenticated(true);
     setUsername(user);
   };
@@ -28,6 +36,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
     localStorage.removeItem('pos2sapAuth');
     localStorage.removeItem('pos2sapUser');
     localStorage.removeItem('pos2sapToken');
+    localStorage.removeItem('pos2sapRefreshToken');
     setAuthenticated(false);
     setUsername(null);
   };
