@@ -21,12 +21,15 @@ import {
   mappingTableClass,
   mappingTableHeadClass,
 } from '@/components/mapping/MappingPageLayout';
+import { MappingExcelActions } from '@/components/mapping/MappingExcelActions';
 import { useLanguage } from '@/contexts/LanguageContext';
 import type {
   ProductGroupSapMappingDto,
   UpsertProductGroupMappingDto,
 } from '@/types/productGroupMapping';
-import { cn, fmtDatetime } from '@/lib/utils';
+import { cn, fmtDatetime, todayStr } from '@/lib/utils';
+import { downloadCsv } from '@/lib/downloadCsv';
+import { csvBool, csvCell, csvInt, csvNullable, parseCsv } from '@/lib/parseCsv';
 import { useMappingPagination } from '@/hooks/useMappingPagination';
 
 const SAP_PENDING = '[SAP-PENDING]';
@@ -238,6 +241,102 @@ export default function ProductGroupMappingPage() {
     setPendingAdd(null);
   }
 
+  function handleExportExcel() {
+    if (rows.length === 0) {
+      toast.error(t('exportEmpty'));
+      return;
+    }
+    const sorted = [...rows].sort((a, b) => a.productGroupID - b.productGroupID);
+    downloadCsv(
+      `product-group-mapping-${todayStr()}.csv`,
+      [
+        'ProductGroupID', 'ProductGroupCode', 'ProductGroupName',
+        'SapItemGroupCode', 'SapItemGroupName', 'IsActive', 'SortOrder', 'Remarks',
+      ],
+      sorted.map((r) => {
+        const e = getEdit(r);
+        return [
+          e.productGroupID,
+          e.productGroupCode,
+          e.productGroupName,
+          e.sapItemGroupCode ?? '',
+          e.sapItemGroupName ?? '',
+          e.isActive ? 1 : 0,
+          e.sortOrder,
+          e.remarks ?? '',
+        ];
+      })
+    );
+    toast.success(t('exportSuccess', { count: sorted.length }));
+  }
+
+  async function handleImportExcel(text: string) {
+    const { rows: csvRows } = parseCsv(text);
+    if (csvRows.length === 0) {
+      toast.error(t('importMappingEmpty'));
+      return;
+    }
+
+    let ok = 0;
+    let skip = 0;
+    let fail = 0;
+
+    for (const raw of csvRows) {
+      const productGroupID = csvInt(csvCell(raw, 'ProductGroupID', 'productGroupID'));
+      if (!productGroupID) {
+        skip++;
+        continue;
+      }
+
+      const existing = rows.find((r) => r.productGroupID === productGroupID);
+      const unmappedHit = unmapped.find((u) => u.productGroupID === productGroupID);
+      const productGroupCode =
+        csvNullable(csvCell(raw, 'ProductGroupCode', 'productGroupCode'))
+        ?? existing?.productGroupCode
+        ?? unmappedHit?.productGroupCode
+        ?? String(productGroupID);
+      const productGroupName =
+        csvNullable(csvCell(raw, 'ProductGroupName', 'productGroupName'))
+        ?? existing?.productGroupName
+        ?? unmappedHit?.productGroupName
+        ?? `Group ${productGroupID}`;
+
+      const payload: UpsertProductGroupMappingDto = {
+        productGroupID,
+        productGroupCode,
+        productGroupName,
+        sapItemGroupCode: csvNullable(csvCell(raw, 'SapItemGroupCode', 'sapItemGroupCode')),
+        sapItemGroupName: csvNullable(csvCell(raw, 'SapItemGroupName', 'sapItemGroupName')),
+        isActive: csvBool(csvCell(raw, 'IsActive', 'isActive'), existing?.isActive ?? true),
+        sortOrder: csvInt(csvCell(raw, 'SortOrder', 'sortOrder'), existing?.sortOrder ?? productGroupID),
+        remarks: csvNullable(csvCell(raw, 'Remarks', 'remarks')),
+      };
+
+      try {
+        await productGroupMappingService.upsert(payload);
+        ok++;
+      } catch {
+        fail++;
+      }
+    }
+
+    await Promise.all([
+      qc.invalidateQueries({ queryKey: ['productgroup-mapping'] }),
+      qc.invalidateQueries({ queryKey: ['productgroup-mapping-unmapped'] }),
+    ]);
+    setEdits({});
+
+    if (ok === 0 && fail === 0) {
+      toast.error(t('importMappingInvalid'));
+      return;
+    }
+    if (fail > 0 || skip > 0) {
+      toast.error(t('importMappingPartial', { ok, skip, fail }));
+    } else {
+      toast.success(t('importMappingSuccess', { count: ok }));
+    }
+  }
+
   return (
     <div className="space-y-6 pb-24">
       <MappingPageHeader
@@ -263,7 +362,7 @@ export default function ProductGroupMappingPage() {
       />
 
       {stats.pendingSap > 0 && (
-        <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+        <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/40 dark:bg-amber-950/50 dark:text-amber-200">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>{t('pgMappingPendingSapHint')}</span>
         </div>
@@ -293,6 +392,14 @@ export default function ProductGroupMappingPage() {
               <option value="INACTIVE">{t('pgMappingFilterInactive')}</option>
             </select>
           </div>
+        )}
+        actions={(
+          <MappingExcelActions
+            disabled={isBusy}
+            exportDisabled={isLoading || rows.length === 0}
+            onExport={handleExportExcel}
+            onImportText={handleImportExcel}
+          />
         )}
       />
 
@@ -335,8 +442,8 @@ export default function ProductGroupMappingPage() {
                     className={cn(
                       'transition-colors hover:bg-muted/30',
                       !e.isActive && 'opacity-50',
-                      pending && 'bg-amber-50/60',
-                      dirty && 'bg-sky-50/50 ring-1 ring-inset ring-sky-200'
+                      pending && 'bg-amber-50/60 dark:bg-amber-950/40',
+                      dirty && 'bg-sky-50/50 ring-1 ring-inset ring-sky-200 dark:bg-sky-950/40 dark:ring-sky-500/30'
                     )}
                   >
                     <td className="px-3 py-1.5 font-mono text-xs text-muted-foreground">{row.productGroupID}</td>

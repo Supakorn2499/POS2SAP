@@ -17,13 +17,16 @@ import {
   mappingTableClass,
   mappingTableHeadClass,
 } from '@/components/mapping/MappingPageLayout';
+import { MappingExcelActions } from '@/components/mapping/MappingExcelActions';
 import {
   MappingConfirmDialog,
   type MappingConfirmState,
 } from '@/components/mapping/MappingConfirmDialog';
 import { useLanguage } from '@/contexts/LanguageContext';
 import type { PaytypeGlMappingDto, SapPayCategory, UpsertGlMappingDto } from '@/types/glMapping';
-import { cn, fmtDatetime } from '@/lib/utils';
+import { cn, fmtDatetime, todayStr } from '@/lib/utils';
+import { downloadCsv } from '@/lib/downloadCsv';
+import { csvBool, csvCell, csvInt, csvNullable, parseCsv } from '@/lib/parseCsv';
 import { useMappingPagination } from '@/hooks/useMappingPagination';
 
 const CATEGORIES: SapPayCategory[] = ['CASH', 'TRANSFER', 'CREDIT_CARD', 'SKIP'];
@@ -268,6 +271,102 @@ export default function GlMappingPage() {
     setPendingAdd(null);
   }
 
+  function handleExportExcel() {
+    if (rows.length === 0) {
+      toast.error(t('exportEmpty'));
+      return;
+    }
+    const sorted = [...rows].sort((a, b) => a.payTypeID - b.payTypeID);
+    downloadCsv(
+      `gl-mapping-${todayStr()}.csv`,
+      [
+        'PayTypeID', 'PayTypeName', 'SapPayCategory', 'SapGlAccount',
+        'SapPayTypeName', 'IsActive', 'SortOrder', 'Remarks',
+      ],
+      sorted.map((r) => {
+        const e = getEdit(r);
+        return [
+          e.payTypeID,
+          e.payTypeName,
+          e.sapPayCategory,
+          e.sapGlAccount ?? '',
+          e.sapPayTypeName ?? '',
+          e.isActive ? 1 : 0,
+          e.sortOrder,
+          e.remarks ?? '',
+        ];
+      })
+    );
+    toast.success(t('exportSuccess', { count: sorted.length }));
+  }
+
+  async function handleImportExcel(text: string) {
+    const { rows: csvRows } = parseCsv(text);
+    if (csvRows.length === 0) {
+      toast.error(t('importMappingEmpty'));
+      return;
+    }
+
+    let ok = 0;
+    let skip = 0;
+    let fail = 0;
+
+    for (const raw of csvRows) {
+      const payTypeID = csvInt(csvCell(raw, 'PayTypeID', 'payTypeID', 'paytypeid'));
+      if (!payTypeID) {
+        skip++;
+        continue;
+      }
+
+      const catRaw = csvCell(raw, 'SapPayCategory', 'sapPayCategory').toUpperCase();
+      const sapPayCategory = (CATEGORIES.includes(catRaw as SapPayCategory)
+        ? catRaw
+        : 'SKIP') as SapPayCategory;
+
+      const existing = rows.find((r) => r.payTypeID === payTypeID);
+      const unmappedHit = unmapped.find((u) => u.payTypeID === payTypeID);
+      const payTypeName =
+        csvNullable(csvCell(raw, 'PayTypeName', 'payTypeName'))
+        ?? existing?.payTypeName
+        ?? unmappedHit?.payTypeName
+        ?? `PayType ${payTypeID}`;
+
+      const payload: UpsertGlMappingDto = {
+        payTypeID,
+        payTypeName,
+        sapPayCategory,
+        sapGlAccount: csvNullable(csvCell(raw, 'SapGlAccount', 'sapGlAccount')),
+        sapPayTypeName: csvNullable(csvCell(raw, 'SapPayTypeName', 'sapPayTypeName')),
+        isActive: csvBool(csvCell(raw, 'IsActive', 'isActive'), existing?.isActive ?? true),
+        sortOrder: csvInt(csvCell(raw, 'SortOrder', 'sortOrder'), existing?.sortOrder ?? 99),
+        remarks: csvNullable(csvCell(raw, 'Remarks', 'remarks')),
+      };
+
+      try {
+        await glMappingService.upsert(payload);
+        ok++;
+      } catch {
+        fail++;
+      }
+    }
+
+    await Promise.all([
+      qc.invalidateQueries({ queryKey: ['glmapping'] }),
+      qc.invalidateQueries({ queryKey: ['glmapping-unmapped'] }),
+    ]);
+    setEdits({});
+
+    if (ok === 0 && fail === 0) {
+      toast.error(t('importMappingInvalid'));
+      return;
+    }
+    if (fail > 0 || skip > 0) {
+      toast.error(t('importMappingPartial', { ok, skip, fail }));
+    } else {
+      toast.success(t('importMappingSuccess', { count: ok }));
+    }
+  }
+
   return (
     <div className="space-y-6 pb-24">
       <MappingPageHeader
@@ -293,7 +392,7 @@ export default function GlMappingPage() {
       />
 
       {stats.pendingGl > 0 && (
-        <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+        <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/40 dark:bg-amber-950/50 dark:text-amber-200">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>{t('glMappingPendingGlHint')}</span>
         </div>
@@ -332,6 +431,14 @@ export default function GlMappingPage() {
               <option value="PENDING_GL">{t('glMappingFilterPendingGl')}</option>
             </select>
           </div>
+        )}
+        actions={(
+          <MappingExcelActions
+            disabled={isBusy}
+            exportDisabled={isLoading || rows.length === 0}
+            onExport={handleExportExcel}
+            onImportText={handleImportExcel}
+          />
         )}
       />
 
@@ -374,8 +481,8 @@ export default function GlMappingPage() {
                     className={cn(
                       'transition-colors hover:bg-muted/30',
                       !e.isActive && 'opacity-50',
-                      pending && 'bg-amber-50/60',
-                      dirty && 'bg-sky-50/50 ring-1 ring-inset ring-sky-200'
+                      pending && 'bg-amber-50/60 dark:bg-amber-950/40',
+                      dirty && 'bg-sky-50/50 ring-1 ring-inset ring-sky-200 dark:bg-sky-950/40 dark:ring-sky-500/30'
                     )}
                   >
                     <td className="px-3 py-1.5 font-mono text-xs text-muted-foreground">{row.payTypeID}</td>

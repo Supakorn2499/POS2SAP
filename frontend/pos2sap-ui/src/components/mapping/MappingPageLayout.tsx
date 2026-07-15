@@ -42,15 +42,15 @@ export function MappingStatGrid({ items }: { items: MappingStatItem[] }) {
           key={s.label}
           className={cn(
             'rounded-xl border bg-card px-4 py-3',
-            s.warn && 'border-amber-300 bg-amber-50/50'
+            s.warn && 'border-amber-300 bg-amber-50/50 dark:border-amber-500/40 dark:bg-amber-950/50'
           )}
         >
           <p className="text-xs text-muted-foreground">{s.label}</p>
           <p
             className={cn(
               'mt-1 text-2xl font-semibold',
-              s.warn && 'text-amber-700',
-              s.accent === 'green' && 'text-green-700',
+              s.warn && 'text-amber-700 dark:text-amber-300',
+              s.accent === 'green' && 'text-green-700 dark:text-emerald-300',
               s.accent === 'muted' && 'text-muted-foreground'
             )}
           >
@@ -67,6 +67,7 @@ interface MappingToolbarProps {
   onSearchChange: (v: string) => void;
   searchPlaceholder: string;
   filter?: ReactNode;
+  actions?: ReactNode;
   showClear?: boolean;
   onClear?: () => void;
   clearLabel?: string;
@@ -77,6 +78,7 @@ export function MappingToolbar({
   onSearchChange,
   searchPlaceholder,
   filter,
+  actions,
   showClear,
   onClear,
   clearLabel,
@@ -103,6 +105,7 @@ export function MappingToolbar({
           {clearLabel}
         </button>
       )}
+      {actions}
     </div>
   );
 }
@@ -281,7 +284,7 @@ export function MappingUnsavedBar({
   return (
     <div className="fixed bottom-0 left-0 right-0 z-40 border-t bg-background/95 px-6 py-4 shadow-lg backdrop-blur sm:left-56">
       <div className="mx-auto flex max-w-5xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-sm font-medium text-amber-800">{message}</p>
+        <p className="text-sm font-medium text-amber-800 dark:text-amber-200">{message}</p>
         <div className="flex flex-wrap gap-2">
           <button
             type="button"

@@ -15,7 +15,9 @@ x86/
 [Aa][Rr][Mm]64/
 bld/
 [Ll]og/
-[Ll]ogs/
+# Serilog / runtime log dirs only — not source folders named Logs (e.g. DTOs/Logs)
+**/Logs/*.log
+backend/POS2SAP.API/Logs/
 [Oo]ut/
 msbuild.log
 msbuild.err
@@ -107,6 +109,9 @@ StyleCopReport.xml
 *.ldf
 *.ndf
 
+# Local data exports (Excel/CSV dumps)
+docs/exports/
+
 # -------- Node / React / Vite --------
 node_modules/
 dist/
@@ -175,3 +180,7 @@ secrets.json
 # Local tokens / debug artifacts
 token.txt
 backend/POS2SAP.API/backend-debug.log
+
+# local diagnose dumps
+backend/scripts/out_*.json
+
