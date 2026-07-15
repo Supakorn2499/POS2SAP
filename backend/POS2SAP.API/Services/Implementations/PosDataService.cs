@@ -14,31 +14,27 @@ namespace POS2SAP.API.Services.Implementations;
 public class PosDataService : IPosDataService
 {
     private readonly IDbConnection _db;
-    private readonly IDeliveryDocTypeService _dlDocTypes;
 
-    public PosDataService(IDbConnection db, IDeliveryDocTypeService dlDocTypes)
+    public PosDataService(IDbConnection db)
     {
         _db = db;
-        _dlDocTypes = dlDocTypes;
     }
 
     /// <summary>
     /// AR head columns + full-tax join (orderfulltaxinvoicelink / ordertransactionfulltaxinvoice, FullTaxStatus=2).
-    /// Non-full-tax bills keep existing CardName / empty tax fields behaviour.
+    /// CardCode=SLOC, BranchCode=PTTShopCode, BranchName/CardName=ShopName, VatBranch=BranchNo.
+    /// Tax fields still come from full-tax when present.
     /// </summary>
     private const string ArInvoiceHeadSelect = @"
                 a.ReceiptNumber                                          AS PosDocNo,
                 a.SaleDate                                               AS DocDate,
                 ISNULL(NULLIF(s.PTTShopCode, ''), s.shopcode)            AS BranchCode,
-                ISNULL(s.BranchName, '')                                 AS BranchName,
+                ISNULL(s.shopname, '')                                   AS BranchName,
                 CAST(a.ComputerID AS NVARCHAR(20))                       AS PosId,
                 ISNULL(s.SLOC, '')                                       AS CardCode,
-                CASE
-                    WHEN ft.FullTaxInvoiceID IS NOT NULL THEN
-                        NULLIF(LTRIM(RTRIM(CONCAT(ISNULL(ft.InvoiceName, N''), N' ', ISNULL(ft.InvoiceName1, N'')))), N'')
-                    WHEN NULLIF(LTRIM(RTRIM(ISNULL(a.MemberName, N''))), N'') IS NOT NULL THEN a.MemberName
-                    ELSE ISNULL(s.BranchName, N'')
-                END                                                      AS CardName,
+                CASE WHEN ft.FullTaxInvoiceID IS NOT NULL
+                     THEN ISNULL(ft.InvoiceName, '')
+                     ELSE ISNULL(s.shopname, '') END                     AS CardName,
                 CASE WHEN ft.FullTaxInvoiceID IS NOT NULL THEN ft.InvoiceTaxID ELSE NULL END
                                                                          AS CustTaxId,
                 CASE WHEN ft.FullTaxInvoiceID IS NOT NULL THEN
@@ -57,7 +53,7 @@ public class PosDataService : IPosDataService
                 CASE WHEN ft.FullTaxInvoiceID IS NOT NULL THEN ft.InvoiceTelephone ELSE NULL END
                                                                          AS CustTel,
                 a.MemberID                                               AS CustMemberNo,
-                ''                                                       AS VatBranch,
+                ISNULL(s.BranchNo, '')                                   AS VatBranch,
                 a.TransactionNote                                        AS Comments,
                 ISNULL(sm.SaleModeName, CAST(a.SaleMode AS NVARCHAR(20))) AS Channel,
                 NULL                                                     AS CustBillPoint,
@@ -87,6 +83,13 @@ public class PosDataService : IPosDataService
                 AND ft.FullTaxInvoiceComputerID = ftlink.FullTaxInvoiceComputerID
                 AND ft.FullTaxStatus = 2";
 
+    /// <summary>POS orderdetail rows that belong on AR/Delivery lines (paid, real product, not void/comment).</summary>
+    private const string BillableOrderDetailWhere = @"
+              AND b.OrderStatusID = 2
+              AND b.ProductID > 0
+              AND ISNULL(b.IsComment, 0) = 0
+              AND ISNULL(b.VoidStaffID, 0) = 0";
+
     public Task<List<SapArInvoiceHeadDto>> GetPendingBillsAsync(DateTime dateFrom, DateTime dateTo, int batchSize = 500)
         => GetBillsByFilterAsyncImpl(dateFrom, dateTo, null, batchSize);
 
@@ -104,7 +107,7 @@ public class PosDataService : IPosDataService
         // Optional branch filter — appended as a literal string (safe: branchCode is parameterised separately)
         var branchClause = string.IsNullOrWhiteSpace(branchCode)
             ? ""
-            : "AND (s.shopcode = @BranchCode OR s.PTTShopCode = @BranchCode)";
+            : "AND (s.shopcode = @BranchCode OR s.PTTShopCode = @BranchCode OR s.SLOC = @BranchCode)";
 
         var headSql = $@"
             SELECT TOP {batchSize}
@@ -129,21 +132,27 @@ public class PosDataService : IPosDataService
         var allLinesSql = $@"
             SELECT
                 b.TranKey,
-                ISNULL(c.ProductCode, CAST(b.ProductID AS NVARCHAR(50)))  AS ItemCode,
+                LTRIM(RTRIM(ISNULL(c.ProductCode, CAST(b.ProductID AS NVARCHAR(50))))) AS ItemCode,
                 COALESCE(
                     NULLIF(NULLIF(LTRIM(RTRIM(pgm.SapItemGroupCode)), ''), '[SAP-PENDING]'),
                     ISNULL(pg.ProductGroupCode, '')
                 )                                                          AS ItemCategory,
-                ISNULL(c.ProductName, '')                                  AS Dscription,
-                ISNULL(b.Comment, '')                                      AS FreeTxt,
+                ''                                                         AS Dscription,
+                ISNULL(c.ProductName, '')                                  AS Text,
                 ISNULL(b.TotalQty, 0)                                      AS Quantity,
                 ISNULL(c.ProductUnitName, '')                              AS UomCode,
                 ISNULL(b.DiscPricePercent, 0)                             AS DiscPrcnt,
-                ISNULL(ISNULL(b.ProductBeforeVAT, 0) / NULLIF(ISNULL(b.TotalQty, 0), 0), 0) AS Price,
-                ISNULL((ISNULL(b.ProductBeforeVAT, 0) + ISNULL(b.ProductVAT, 0)) / NULLIF(ISNULL(b.TotalQty, 0), 0), 0) AS PriceAfVat,
-                ISNULL(b.ProductVAT, 0)                                    AS VatSum,
-                ISNULL(b.ProductBeforeVAT, 0)                              AS LineTotal,
-                ISNULL(b.ProductBeforeVAT, 0) + ISNULL(b.ProductVAT, 0)   AS GTotal,
+                ROUND(
+                    CASE WHEN ISNULL(b.TotalQty, 0) = 0 THEN 0
+                         ELSE (ISNULL(b.WeightPrice, 0) - ISNULL(b.WeightPriceVAT, 0)) / b.TotalQty
+                    END, 2)                                                AS Price,
+                ROUND(
+                    CASE WHEN ISNULL(b.TotalQty, 0) = 0 THEN 0
+                         ELSE ISNULL(b.WeightPrice, 0) / b.TotalQty
+                    END, 2)                                                AS PriceAfVat,
+                ROUND(ISNULL(b.WeightPriceVAT, 0), 2)                      AS VatSum,
+                ROUND(ISNULL(b.WeightPrice, 0) - ISNULL(b.WeightPriceVAT, 0), 2) AS LineTotal,
+                ROUND(ISNULL(b.WeightPrice, 0), 2)                         AS GTotal,
                 ISNULL(CAST(b.InventoryID AS NVARCHAR(20)), '')            AS WhsCode
             FROM orderdetail b
             LEFT JOIN products c ON c.ProductID = b.ProductID
@@ -152,6 +161,7 @@ public class PosDataService : IPosDataService
             LEFT JOIN productgroup_sap_mapping pgm
                 ON pgm.ProductGroupID = pg.ProductGroupID AND pgm.IsActive = 1
             WHERE b.TranKey IN ({tranKeyCsv})
+              {BillableOrderDetailWhere}
             ORDER BY b.TranKey, b.DisplayOrdering, b.OrderDetailID";
 
         var allLines = (await _db.QueryAsync<dynamic>(allLinesSql, commandTimeout: 120)).ToList();
@@ -163,9 +173,14 @@ public class PosDataService : IPosDataService
         {
             SapArInvoiceHeadDto headDto = MapHead(h);
             var lines = linesByKey.GetValueOrDefault((string)h.TranKey) ?? new List<dynamic>();
-            var docNum1 = (string)Str(h.PosDocNo);
+            var docNum1 = headDto.DocNum;
+            var whs1 = headDto.BranchCode; // PTTShopCode
             var dl1 = new List<SapArInvoiceLineDto>(); int li1 = 0;
-            foreach (var l in lines) dl1.Add(MapLine(l, docNum1, li1++));
+            foreach (var l in lines)
+            {
+                if (!IsBillableItemCode(Str(l.ItemCode))) continue;
+                dl1.Add(MapLine(l, docNum1, whs1, li1++));
+            }
             headDto.DocumentLines = dl1;
             results.Add(headDto);
         }
@@ -174,8 +189,15 @@ public class PosDataService : IPosDataService
 
     private async Task<List<SapArInvoiceHeadDto>> GetBillsByDocNosAsyncImpl(IEnumerable<string> docNos)
     {
-        var docNoList = docNos.ToList();
-        if (!docNoList.Any()) return new();
+        var requested = docNos
+            .Where(d => !string.IsNullOrWhiteSpace(d))
+            .Select(d => d.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (requested.Count == 0) return new();
+
+        var receiptNums = PosDocNumHelper.ExtractReceiptNumbers(requested);
+        if (receiptNums.Count == 0) return new();
 
         var headSql = $@"
             SELECT
@@ -186,8 +208,12 @@ public class PosDataService : IPosDataService
               AND ISNULL(a.Deleted, 0) = 0
             ORDER BY a.SaleDate, a.ReceiptNumber";
 
-        var headCmd = new CommandDefinition(headSql, new { DocNos = docNoList }, commandTimeout: 180);
+        var headCmd = new CommandDefinition(headSql, new { DocNos = receiptNums }, commandTimeout: 180);
         var heads = (await _db.QueryAsync<dynamic>(headCmd)).ToList();
+
+        heads = heads
+            .Where(h => requested.Any(r => PosDocNumHelper.Matches(r, Str(h.BranchCode), Str(h.PosDocNo))))
+            .ToList();
 
         if (!heads.Any()) return new();
 
@@ -197,21 +223,27 @@ public class PosDataService : IPosDataService
         var allLinesSql = $@"
             SELECT
                 b.TranKey,
-                ISNULL(c.ProductCode, CAST(b.ProductID AS NVARCHAR(50)))  AS ItemCode,
+                LTRIM(RTRIM(ISNULL(c.ProductCode, CAST(b.ProductID AS NVARCHAR(50))))) AS ItemCode,
                 COALESCE(
                     NULLIF(NULLIF(LTRIM(RTRIM(pgm.SapItemGroupCode)), ''), '[SAP-PENDING]'),
                     ISNULL(pg.ProductGroupCode, '')
                 )                                                          AS ItemCategory,
-                ISNULL(c.ProductName, '')                                  AS Dscription,
-                ISNULL(b.Comment, '')                                      AS FreeTxt,
+                ''                                                         AS Dscription,
+                ISNULL(c.ProductName, '')                                  AS Text,
                 ISNULL(b.TotalQty, 0)                                      AS Quantity,
                 ISNULL(c.ProductUnitName, '')                              AS UomCode,
                 ISNULL(b.DiscPricePercent, 0)                             AS DiscPrcnt,
-                ISNULL(ISNULL(b.ProductBeforeVAT, 0) / NULLIF(ISNULL(b.TotalQty, 0), 0), 0) AS Price,
-                ISNULL((ISNULL(b.ProductBeforeVAT, 0) + ISNULL(b.ProductVAT, 0)) / NULLIF(ISNULL(b.TotalQty, 0), 0), 0) AS PriceAfVat,
-                ISNULL(b.ProductVAT, 0)                                    AS VatSum,
-                ISNULL(b.ProductBeforeVAT, 0)                              AS LineTotal,
-                ISNULL(b.ProductBeforeVAT, 0) + ISNULL(b.ProductVAT, 0)   AS GTotal,
+                ROUND(
+                    CASE WHEN ISNULL(b.TotalQty, 0) = 0 THEN 0
+                         ELSE (ISNULL(b.WeightPrice, 0) - ISNULL(b.WeightPriceVAT, 0)) / b.TotalQty
+                    END, 2)                                                AS Price,
+                ROUND(
+                    CASE WHEN ISNULL(b.TotalQty, 0) = 0 THEN 0
+                         ELSE ISNULL(b.WeightPrice, 0) / b.TotalQty
+                    END, 2)                                                AS PriceAfVat,
+                ROUND(ISNULL(b.WeightPriceVAT, 0), 2)                      AS VatSum,
+                ROUND(ISNULL(b.WeightPrice, 0) - ISNULL(b.WeightPriceVAT, 0), 2) AS LineTotal,
+                ROUND(ISNULL(b.WeightPrice, 0), 2)                         AS GTotal,
                 ISNULL(CAST(b.InventoryID AS NVARCHAR(20)), '')            AS WhsCode
             FROM orderdetail b
             LEFT JOIN products c ON c.ProductID = b.ProductID
@@ -220,6 +252,7 @@ public class PosDataService : IPosDataService
             LEFT JOIN productgroup_sap_mapping pgm
                 ON pgm.ProductGroupID = pg.ProductGroupID AND pgm.IsActive = 1
             WHERE b.TranKey IN ({tranKeyCsv})
+              {BillableOrderDetailWhere}
             ORDER BY b.TranKey, b.DisplayOrdering, b.OrderDetailID";
 
         var allLines = (await _db.QueryAsync<dynamic>(allLinesSql, commandTimeout: 180)).ToList();
@@ -233,9 +266,14 @@ public class PosDataService : IPosDataService
         {
             SapArInvoiceHeadDto headDto = MapHead(h);
             var lines = linesByKey.GetValueOrDefault((string)h.TranKey) ?? new List<dynamic>();
-            var docNum2 = (string)Str(h.PosDocNo);
+            var docNum2 = headDto.DocNum;
+            var whs2 = headDto.BranchCode; // PTTShopCode
             var dl2 = new List<SapArInvoiceLineDto>(); int li2 = 0;
-            foreach (var l in lines) dl2.Add(MapLine(l, docNum2, li2++));
+            foreach (var l in lines)
+            {
+                if (!IsBillableItemCode(Str(l.ItemCode))) continue;
+                dl2.Add(MapLine(l, docNum2, whs2, li2++));
+            }
             headDto.DocumentLines = dl2;
             results.Add(headDto);
         }
@@ -247,14 +285,17 @@ public class PosDataService : IPosDataService
             LEFT JOIN shop_data s  ON s.ShopID = a.ShopID
             LEFT JOIN salemode sm  ON sm.SaleModeID = TRY_CAST(a.SaleMode AS INT)";
 
+    /// CardCode=SLOC, BranchCode=PTTShopCode, BranchName/CardName=ShopName.
     private const string IncomingPaymentHeadSelect = @"
                     a.ReceiptNumber                                              AS PosDocNo,
                     CONVERT(varchar(10), a.SaleDate, 23)                        AS DocDate,
+                    CONVERT(varchar(10), a.SaleDate, 23)                        AS SettlementDate,
+                    CASE WHEN a.PaidTime IS NULL THEN '' ELSE CONVERT(varchar(8), a.PaidTime, 108) END AS SettlementTime,
                     ISNULL(s.SLOC, '')                                          AS CardCode,
-                    ISNULL(a.MemberName, '')                                    AS CardName,
+                    ISNULL(s.shopname, '')                                      AS CardName,
                     CAST(a.ComputerID AS NVARCHAR(20))                          AS PosId,
                     ISNULL(NULLIF(s.PTTShopCode, ''), s.shopcode)               AS BranchCode,
-                    ISNULL(s.BranchName, '')                                    AS BranchName,
+                    ISNULL(s.shopname, '')                                      AS BranchName,
                     ISNULL(sm.SaleModeName, CAST(a.SaleMode AS NVARCHAR(20)))   AS Channel,
                     ISNULL(a.TransactionNote, '')                               AS Comments,
                     ISNULL(a.ReceiptPayPrice, 0)                                AS DocTotal,
@@ -289,9 +330,18 @@ public class PosDataService : IPosDataService
         // ---------------------------------------------------------------- Head SQL
         string headSql;
         object headParam;
+        List<string>? requestedDocNos = null;
 
         if (docNos is { Count: > 0 })
         {
+            requestedDocNos = docNos
+                .Where(d => !string.IsNullOrWhiteSpace(d))
+                .Select(d => d.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var receiptNums = PosDocNumHelper.ExtractReceiptNumbers(requestedDocNos);
+            if (receiptNums.Count == 0) return new();
+
             headSql = $@"
                 SELECT
                     {IncomingPaymentHeadSelect}
@@ -301,27 +351,35 @@ public class PosDataService : IPosDataService
                   AND a.TransactionStatusID = 2
                   AND ISNULL(a.Deleted, 0) = 0
                 ORDER BY a.SaleDate, a.ReceiptNumber";
-            headParam = new { DocNos = docNos };
+            headParam = new { DocNos = receiptNums };
         }
         else
         {
             var df = dateFrom?.Date ?? new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
             var dtExcl = (dateTo?.Date ?? df).AddDays(1);
 
-            // requireArSuccess=true: only receipts with SUCCESS AR invoice
-            // (AP duplicate-send prevention is handled in RunIncomingPaymentBatchAsync — not in SQL)
             var arSuccessClause = requireArSuccess ? @"
                   AND EXISTS (
                     SELECT 1 FROM interface_logs il
-                    WHERE il.pos_doc_no = a.ReceiptNumber
-                      AND il.interface_type = 'AR'
+                    WHERE il.interface_type = 'AR'
                       AND il.status = 'SUCCESS'
                       AND il.is_deleted = 0
+                      AND (
+                        il.pos_doc_no = (ISNULL(NULLIF(s.PTTShopCode, ''), s.shopcode) + N'|' + a.ReceiptNumber)
+                        OR (
+                          il.pos_doc_no = a.ReceiptNumber
+                          AND (
+                            il.branch_code = ISNULL(NULLIF(s.PTTShopCode, ''), s.shopcode)
+                            OR il.branch_code = ISNULL(s.SLOC, '')
+                            OR ISNULL(il.branch_code, '') = ''
+                          )
+                        )
+                      )
                   )" : "";
 
             var branchClause = string.IsNullOrWhiteSpace(branchCode)
                 ? ""
-                : "AND (s.shopcode = @BranchCode OR s.PTTShopCode = @BranchCode)";
+                : "AND (s.shopcode = @BranchCode OR s.PTTShopCode = @BranchCode OR s.SLOC = @BranchCode)";
 
             headSql = $@"
                 SELECT TOP {batchSize}
@@ -340,6 +398,12 @@ public class PosDataService : IPosDataService
 
         var headCmd = new CommandDefinition(headSql, headParam, commandTimeout: 120);
         var heads = (await _db.QueryAsync<dynamic>(headCmd)).ToList();
+        if (requestedDocNos is { Count: > 0 })
+        {
+            heads = heads
+                .Where(h => requestedDocNos.Any(r => PosDocNumHelper.Matches(r, Str(h.BranchCode), Str(h.PosDocNo))))
+                .ToList();
+        }
         if (!heads.Any()) return new();
 
         // ---------------------------------------------------------------- Payment detail SQL
@@ -374,49 +438,77 @@ public class PosDataService : IPosDataService
             .GroupBy(p => (string)p.TranKey)
             .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
 
-        var arInvoiceDocByReceipt = await LoadArInvoiceDocNumsAsync(
-            heads.Select(h => (string)h.PosDocNo).Distinct().ToList());
+        var arInvoiceDocByKey = await LoadArInvoiceDocNumsAsync(heads);
 
         // ---------------------------------------------------------------- Assemble DTOs
         var results = new List<SapIncomingPaymentDto>();
         foreach (var h in heads)
         {
-            var docNum = Str(h.PosDocNo);
-            var pays   = paysByKey.GetValueOrDefault((string)h.TranKey) ?? new List<dynamic>();
-            arInvoiceDocByReceipt.TryGetValue(docNum, out string? arInvoiceNum);
+            var key = PosDocNumHelper.Build(Str(h.BranchCode), Str(h.PosDocNo));
+            arInvoiceDocByKey.TryGetValue(key, out string? arInvoiceNum);
+            if (arInvoiceNum is null)
+                arInvoiceDocByKey.TryGetValue(Str(h.PosDocNo), out arInvoiceNum);
 
+            var pays = paysByKey.GetValueOrDefault((string)h.TranKey) ?? new List<dynamic>();
             results.Add(BuildIncomingPaymentDto(h, pays, arInvoiceNum));
         }
 
         return results;
     }
 
-    private async Task<Dictionary<string, string>> LoadArInvoiceDocNumsAsync(List<string> receiptNums)
+    private async Task<Dictionary<string, string>> LoadArInvoiceDocNumsAsync(List<dynamic> heads)
     {
-        if (receiptNums.Count == 0)
+        if (heads.Count == 0)
             return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
+        var compoundKeys = heads
+            .Select(h => (string)PosDocNumHelper.Build(Str(h.BranchCode), Str(h.PosDocNo)))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var receiptNums = heads
+            .Select(h => (string)Str(h.PosDocNo))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
         const string sql = @"
-            SELECT il.pos_doc_no AS PosDocNo, il.sap_request AS SapRequest, il.sent_at AS SentAt
+            SELECT il.pos_doc_no AS PosDocNo, il.branch_code AS BranchCode,
+                   il.sap_request AS SapRequest, il.sent_at AS SentAt
             FROM interface_logs il
-            WHERE il.pos_doc_no IN @ReceiptNums
-              AND il.interface_type = 'AR'
+            WHERE il.interface_type = 'AR'
               AND il.status = 'SUCCESS'
               AND il.is_deleted = 0
+              AND (il.pos_doc_no IN @CompoundKeys OR il.pos_doc_no IN @ReceiptNums)
             ORDER BY il.sent_at DESC";
 
         var rows = (await _db.QueryAsync<dynamic>(
-            new CommandDefinition(sql, new { ReceiptNums = receiptNums }, commandTimeout: 120))).ToList();
+            new CommandDefinition(sql, new { CompoundKeys = compoundKeys, ReceiptNums = receiptNums }, commandTimeout: 120))).ToList();
 
         var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var row in rows)
         {
-            var receipt = Str(row.PosDocNo);
-            if (map.ContainsKey(receipt)) continue;
-
+            var posDocNo = Str(row.PosDocNo);
             var arDocNum = SapIncomingPaymentJsonHelper.TryExtractArInvoiceDocNum(Str(row.SapRequest));
-            if (!string.IsNullOrWhiteSpace(arDocNum))
-                map[receipt] = arDocNum;
+            if (string.IsNullOrWhiteSpace(arDocNum)) continue;
+
+            if (!map.ContainsKey(posDocNo))
+                map[posDocNo] = arDocNum;
+
+            if (PosDocNumHelper.TryParse(posDocNo, out string parsedBranch, out string parsedReceipt))
+            {
+                var compound = PosDocNumHelper.Build(parsedBranch, parsedReceipt);
+                if (!map.ContainsKey(compound))
+                    map[compound] = arDocNum;
+            }
+            else
+            {
+                var legBranch = Str(row.BranchCode);
+                if (!string.IsNullOrEmpty(legBranch))
+                {
+                    var compound = PosDocNumHelper.Build(legBranch, posDocNo);
+                    if (!map.ContainsKey(compound))
+                        map[compound] = arDocNum;
+                }
+            }
         }
 
         return map;
@@ -427,7 +519,9 @@ public class PosDataService : IPosDataService
         List<dynamic> pays,
         string? arInvoiceDocNum)
     {
-        var docNum  = Str(h.PosDocNo);
+        var receipt = Str(h.PosDocNo);
+        var branch  = Str(h.BranchCode);
+        var docNum  = PosDocNumHelper.Build(branch, receipt);
         var docDate = Str(h.DocDate);
 
         // Sum by SapPayCategory from paytype_gl_mapping (GL Mapping UI config)
@@ -454,6 +548,8 @@ public class PosDataService : IPosDataService
         {
             DocNum     = docNum,
             DocDate    = docDate,
+            SettlementDate = Str(h.SettlementDate),
+            SettlementTime = Str(h.SettlementTime),
             DocType    = "C",
             CardCode   = Str(h.CardCode),
             CardName   = Str(h.CardName),
@@ -538,234 +634,59 @@ public class PosDataService : IPosDataService
     }
 
     // ------------------------------------------------------------------ Delivery
-    // POS source: document (head) + documenttype (filter) + docdetail (lines) + shop_data
-    // Enabled document types: dl_documenttype_mapping (Delivery UI)
-
-    private const string DeliveryHeadSelect = @"
-                d.DocumentNo                                               AS PosDocNo,
-                d.DocumentDate                                             AS DocDate,
-                ISNULL(NULLIF(s.PTTShopCode, ''), s.ShopCode)             AS BranchCode,
-                ISNULL(s.BranchName, '')                                   AS BranchName,
-                ISNULL(NULLIF(LTRIM(RTRIM(s.TaxPOSID)), ''),
-                       ISNULL(d.DocumentKey, ''))                         AS PosId,
-                ISNULL(s.SLOC, '')                                         AS CardCode,
-                ISNULL(NULLIF(s.BranchName, ''), ISNULL(s.ShopName, '')) AS CardName,
-                ISNULL(NULLIF(LTRIM(RTRIM(s.BranchNo)), ''), '00000')    AS VatBranch,
-                ISNULL(NULLIF(LTRIM(RTRIM(dt.DocumentTypeName)), ''),
-                       dt.DocumentTypeHeader)                              AS DeliveryReason,
-                CASE
-                    WHEN dt.DocumentTypeHeader = 'STOCK-004'
-                    THEN ISNULL(d.Remark, '')
-                    ELSE ''
-                END                                                        AS DeliveryReasonOther,
-                ISNULL(d.Remark, '')                                       AS Comments,
-                CAST(d.DocumentID AS NVARCHAR(20)) + ':' +
-                    CAST(d.KeyShopID AS NVARCHAR(20))                      AS DocKey";
-
-    private const string DeliveryHeadJoins = @"
-            FROM document d
-            INNER JOIN documenttype dt ON dt.DocumentTypeID = d.DocumentTypeID
-            LEFT JOIN shop_data s ON s.ShopID = d.ShopID";
-
-    private const string DeliveryTypeFilter = @"
-                ISNULL(dt.Deleted, 0) = 0
-              AND dt.MovementInStock = -1
-              AND dt.DocumentTypeHeader IN @TypeHeaders
-              AND d.DocumentStatus = 2
-              AND EXISTS (
-                  SELECT 1
-                  FROM docdetail dd
-                  WHERE dd.DocumentID = d.DocumentID
-                    AND dd.KeyShopID = d.KeyShopID
-                    AND ISNULL(NULLIF(dd.ProductAmount, 0), ISNULL(dd.UnitSmallAmount, 0)) > 0
-              )";
+    // Same POS sales source as AR (ordertransaction / orderdetail); map into SapDeliveryDto schema.
 
     public async Task<List<SapDeliveryDto>> GetDeliveriesByDocNosAsync(IEnumerable<string> docNos)
-    {
-        var list = docNos?
-            .Where(d => !string.IsNullOrWhiteSpace(d))
-            .Select(d => d.Trim())
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        => MapArListToDeliveries(await GetBillsByDocNosAsync(docNos));
 
-        if (list is null || list.Count == 0)
-            return new List<SapDeliveryDto>();
-
-        return await LoadDeliveriesAsync(docNoFilter: list);
-    }
-
-    public Task<List<SapDeliveryDto>> GetDeliveriesByFilterAsync(
+    public async Task<List<SapDeliveryDto>> GetDeliveriesByFilterAsync(
         DateTime dateFrom, DateTime dateTo, string? branchCode, int batchSize = 500)
-        => LoadDeliveriesAsync(dateFrom, dateTo, branchCode, batchSize);
+        => MapArListToDeliveries(await GetBillsByFilterAsync(dateFrom, dateTo, branchCode, batchSize));
 
-    public Task<List<SapDeliveryDto>> GetPendingDeliveriesAsync(
+    public async Task<List<SapDeliveryDto>> GetPendingDeliveriesAsync(
         DateTime dateFrom, DateTime dateTo, int batchSize = 500)
-        => LoadDeliveriesAsync(dateFrom, dateTo, null, batchSize);
+        => MapArListToDeliveries(await GetPendingBillsAsync(dateFrom, dateTo, batchSize));
 
-    private async Task<List<SapDeliveryDto>> LoadDeliveriesAsync(
-        DateTime? dateFrom = null,
-        DateTime? dateTo = null,
-        string? branchCode = null,
-        int batchSize = 500,
-        List<string>? docNoFilter = null)
+    private static List<SapDeliveryDto> MapArListToDeliveries(List<SapArInvoiceHeadDto> bills)
+        => bills.Select(MapArToDelivery).ToList();
+
+    private static SapDeliveryDto MapArToDelivery(SapArInvoiceHeadDto bill)
     {
-        var typeHeaders = await _dlDocTypes.GetEnabledTypeHeadersAsync();
-        if (typeHeaders.Count == 0)
-            return new List<SapDeliveryDto>();
-
-        string headSql;
-        object headParam;
-
-        if (docNoFilter is { Count: > 0 })
+        var lines = (bill.DocumentLines ?? new List<SapArInvoiceLineDto>())
+            .Where(l => IsBillableItemCode(l.ItemCode))
+            .ToList();
+        var dto = new SapDeliveryDto
         {
-            headSql = $@"
-                SELECT
-                    {DeliveryHeadSelect}
-                {DeliveryHeadJoins}
-                WHERE {DeliveryTypeFilter}
-                  AND d.DocumentNo IN @DocNos
-                ORDER BY d.DocumentDate, d.DocumentNo";
-            headParam = new { DocNos = docNoFilter, TypeHeaders = typeHeaders };
-        }
-        else
-        {
-            var df = dateFrom ?? DateTime.Today.AddDays(-30);
-            var dtExcl = (dateTo ?? DateTime.Today).Date.AddDays(1);
-            var branchClause = string.IsNullOrWhiteSpace(branchCode)
-                ? ""
-                : "AND (s.ShopCode = @BranchCode OR s.PTTShopCode = @BranchCode)";
-
-            headSql = $@"
-                SELECT TOP {batchSize}
-                    {DeliveryHeadSelect}
-                {DeliveryHeadJoins}
-                WHERE {DeliveryTypeFilter}
-                  AND d.DocumentDate >= @DateFrom
-                  AND d.DocumentDate <  @DateToExcl
-                  {branchClause}
-                ORDER BY d.DocumentDate, d.DocumentNo";
-            headParam = new { DateFrom = df, DateToExcl = dtExcl, BranchCode = branchCode, TypeHeaders = typeHeaders };
-        }
-
-        var headCmd = new CommandDefinition(headSql, headParam, commandTimeout: 120);
-        var heads = (await _db.QueryAsync<dynamic>(headCmd)).ToList();
-        if (!heads.Any()) return new List<SapDeliveryDto>();
-
-        var docNos = new List<string>();
-        foreach (var h in heads)
-        {
-            var no = Str(h.PosDocNo);
-            if (string.IsNullOrWhiteSpace(no)) continue;
-            if (!docNos.Exists(x => string.Equals(x, no, StringComparison.OrdinalIgnoreCase)))
-                docNos.Add(no);
-        }
-        List<dynamic> lines;
-        if (docNos.Count == 0)
-        {
-            lines = new List<dynamic>();
-        }
-        else
-        {
-            var linesSql = @"
-            SELECT
-                d.DocumentNo                                                AS PosDocNo,
-                ISNULL(NULLIF(LTRIM(RTRIM(dd.ProductCode)), ''),
-                       CAST(dd.ProductID AS NVARCHAR(50)))                 AS ItemCode,
-                ISNULL(dd.ProductName, '')                                  AS Dscription,
-                ISNULL(dd.Remark, '')                                       AS FreeTxt,
-                ISNULL(NULLIF(dd.ProductAmount, 0),
-                       ISNULL(dd.UnitSmallAmount, 0))                      AS Quantity,
-                ISNULL(dd.UnitName, '')                                     AS UnitName,
-                dd.DocDetailID
-            FROM docdetail dd
-            INNER JOIN document d
-                ON d.DocumentID = dd.DocumentID
-               AND d.KeyShopID = dd.KeyShopID
-            WHERE d.DocumentNo IN @DocNos
-              AND ISNULL(NULLIF(dd.ProductAmount, 0),
-                         ISNULL(dd.UnitSmallAmount, 0)) > 0
-            ORDER BY d.DocumentNo, dd.DocDetailID";
-
-            lines = (await _db.QueryAsync<dynamic>(
-                new CommandDefinition(linesSql, new { DocNos = docNos }, commandTimeout: 120))).ToList();
-        }
-
-        var linesByDocNo = new Dictionary<string, List<dynamic>>(StringComparer.OrdinalIgnoreCase);
-        var seenDetailIds = new HashSet<long>();
-        foreach (var line in lines)
-        {
-            var detailId = Convert.ToInt64(line.DocDetailID);
-            if (!seenDetailIds.Add(detailId)) continue;
-
-            var key = Str(line.PosDocNo);
-            if (!linesByDocNo.TryGetValue(key, out List<dynamic>? bucket) || bucket is null)
+            DocNum              = bill.DocNum ?? string.Empty,
+            DocDate             = bill.DocDate ?? string.Empty,
+            POSID               = bill.POSID ?? string.Empty,
+            CardCode            = bill.CardCode ?? string.Empty,
+            CardName            = bill.CardName ?? string.Empty,
+            BranchCode          = bill.BranchCode ?? string.Empty,
+            BranchName          = bill.BranchName ?? string.Empty,
+            Channel             = bill.Channel ?? string.Empty,
+            VatBranch           = bill.VatBranch ?? string.Empty,
+            DeliveryReason      = "เบิกเพื่อขาย",
+            DeliveryReasonOther = string.Empty,
+            Comments            = bill.Comments ?? string.Empty,
+            DocumentLines = lines.Select((line, i) =>
             {
-                bucket = new List<dynamic>();
-                linesByDocNo[key] = bucket;
-            }
-            bucket.Add(line);
-        }
-
-        var results = new List<SapDeliveryDto>();
-        foreach (var h in heads)
-        {
-            var docNum = Str(h.PosDocNo);
-            var dto = MapDeliveryHead(h);
-            if (linesByDocNo.TryGetValue(docNum, out List<dynamic>? rowLines) && rowLines is not null)
-            {
-                var dl = new List<SapDeliveryLineDto>();
-                for (var i = 0; i < rowLines.Count; i++)
-                    dl.Add(MapDeliveryLine(rowLines[i], docNum, dto.BranchCode, i));
-                dto.DocumentLines = dl;
-            }
-            results.Add(SapDeliveryJsonHelper.Normalize(dto));
-        }
-
-        return results;
-    }
-
-    private static SapDeliveryDto MapDeliveryHead(dynamic h)
-    {
-        string docDate;
-        if (h.DocDate is DateTime dt)
-            docDate = dt.ToString("yyyy-MM-dd");
-        else if (DateTime.TryParse(h.DocDate?.ToString() as string, out DateTime parsed))
-            docDate = parsed.ToString("yyyy-MM-dd");
-        else
-            docDate = h.DocDate?.ToString() ?? string.Empty;
-
-        return new SapDeliveryDto
-        {
-            DocNum              = Str(h.PosDocNo),
-            DocDate             = docDate,
-            POSID               = Str(h.PosId),
-            CardCode            = Str(h.CardCode),
-            CardName            = Str(h.CardName),
-            BranchCode          = Str(h.BranchCode),
-            BranchName          = Str(h.BranchName),
-            VatBranch           = Str(h.VatBranch),
-            DeliveryReason      = Str(h.DeliveryReason),
-            DeliveryReasonOther = Str(h.DeliveryReasonOther),
-            Comments            = Str(h.Comments),
-            DocumentLines       = new()
+                var uom = line.UomCode ?? string.Empty;
+                return new SapDeliveryLineDto
+                {
+                    DocNum     = bill.DocNum ?? string.Empty,
+                    LineNum    = i,
+                    ItemCode   = (line.ItemCode ?? string.Empty).Trim(),
+                    Dscription = line.Text ?? string.Empty,
+                    FreeTxt    = string.Empty,
+                    Quantity   = SapDeliveryJsonHelper.FormatQuantity(line.Quantity),
+                    UomCode    = uom,
+                    unitMsr    = uom,
+                    WhsCode    = line.WhsCode ?? string.Empty
+                };
+            }).ToList()
         };
-    }
-
-    private static SapDeliveryLineDto MapDeliveryLine(dynamic l, string docNum, string branchCode, int idx)
-    {
-        var unitName = Str(l.UnitName);
-        return new SapDeliveryLineDto
-        {
-            DocNum     = docNum,
-            LineNum    = idx,
-            ItemCode   = Str(l.ItemCode),
-            Dscription = Str(l.Dscription),
-            FreeTxt    = Str(l.FreeTxt),
-            Quantity   = SapDeliveryJsonHelper.FormatQuantity(l.Quantity),
-            UomCode    = unitName,
-            unitMsr    = unitName,
-            WhsCode    = branchCode
-        };
+        return SapDeliveryJsonHelper.Normalize(dto);
     }
 
     // ------------------------------------------------------------------ Mappers
@@ -773,6 +694,12 @@ public class PosDataService : IPosDataService
     private static string Str(object? val) => val?.ToString() ?? string.Empty;
     private static decimal Dec(object? val) => val == null || val is DBNull ? 0m : Convert.ToDecimal(val);
     private static decimal? DecNull(object? val) => val == null || val is DBNull ? null : Convert.ToDecimal(val);
+
+    private static bool IsBillableItemCode(string? itemCode)
+    {
+        var code = (itemCode ?? string.Empty).Trim();
+        return code.Length > 0 && code != "0";
+    }
 
     private static int? IntNull(object? val) => val == null || val is DBNull ? null : Convert.ToInt32(Convert.ToDecimal(val));
     private static int IntZero(object? val) => val == null || val is DBNull ? 0 : Convert.ToInt32(Convert.ToDecimal(val));
@@ -789,7 +716,7 @@ public class PosDataService : IPosDataService
 
         return new SapArInvoiceHeadDto
         {
-            DocNum           = Str(h.PosDocNo),
+            DocNum           = PosDocNumHelper.Build(Str(h.BranchCode), Str(h.PosDocNo)),
             DocDate          = docDate,
             DocDueDate       = docDate,
             PymntGroup       = "Cash",
@@ -819,16 +746,16 @@ public class PosDataService : IPosDataService
         };
     }
 
-    private static SapArInvoiceLineDto MapLine(dynamic l, string docNum, int idx)
+    private static SapArInvoiceLineDto MapLine(dynamic l, string docNum, string whsCode, int idx)
     {
         return new SapArInvoiceLineDto
         {
             DocNum       = docNum,
             LineNum      = idx,
-            ItemCode     = Str(l.ItemCode),
+            ItemCode     = Str(l.ItemCode).Trim(),
             ItemCategory = Str(l.ItemCategory),
-            Dscription   = Str(l.Dscription),
-            FreeTxt      = Str(l.FreeTxt),
+            Dscription   = string.Empty,
+            Text         = Str(l.Text),
             Quantity     = Dec(l.Quantity),
             UomCode      = Str(l.UomCode),
             DiscPrcnt    = Dec(l.DiscPrcnt),
@@ -839,7 +766,7 @@ public class PosDataService : IPosDataService
             VatSum       = Dec(l.VatSum),
             LineTotal    = Dec(l.LineTotal),
             GTotal       = Dec(l.GTotal),
-            WhsCode      = Str(l.WhsCode),
+            WhsCode      = whsCode,
             CouponNo     = new List<object>()
         };
     }

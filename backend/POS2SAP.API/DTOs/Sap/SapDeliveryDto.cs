@@ -10,6 +10,7 @@ public class SapDeliveryDto
     public string CardName { get; set; } = string.Empty;
     public string BranchCode { get; set; } = string.Empty;
     public string BranchName { get; set; } = string.Empty;
+    public string Channel { get; set; } = string.Empty;
     public string VatBranch { get; set; } = string.Empty;
     public string DeliveryReason { get; set; } = string.Empty;
     public string DeliveryReasonOther { get; set; } = string.Empty;

@@ -8,6 +8,8 @@ public class SapIncomingPaymentDto
 {
     public string DocNum { get; set; } = string.Empty;   // ReceiptNumber
     public string DocDate { get; set; } = string.Empty;  // SaleDate (yyyy-MM-dd)
+    public string SettlementDate { get; set; } = string.Empty; // SaleDate (yyyy-MM-dd)
+    public string SettlementTime { get; set; } = string.Empty; // PaidTime (HH:mm:ss)
     public string DocType { get; set; } = "C";           // fixed "C" (Customer)
     public string CardCode { get; set; } = string.Empty; // shop_data.SLOC
     public string CardName { get; set; } = string.Empty; // MemberName

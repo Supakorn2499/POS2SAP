@@ -24,6 +24,7 @@ public static class SapDeliveryJsonHelper
             CardName            = src.CardName ?? string.Empty,
             BranchCode          = src.BranchCode ?? string.Empty,
             BranchName          = src.BranchName ?? string.Empty,
+            Channel             = src.Channel ?? string.Empty,
             VatBranch           = src.VatBranch ?? string.Empty,
             DeliveryReason      = src.DeliveryReason ?? string.Empty,
             DeliveryReasonOther = src.DeliveryReasonOther ?? string.Empty,
@@ -40,7 +41,8 @@ public static class SapDeliveryJsonHelper
         var unitName = !string.IsNullOrWhiteSpace(line.UomCode)
             ? line.UomCode
             : (line.unitMsr ?? string.Empty);
-        var whsCode  = !string.IsNullOrWhiteSpace(branchCode) ? branchCode : (line.WhsCode ?? string.Empty);
+        // Prefer line WhsCode (InventoryID from AR); fall back to branch when empty
+        var whsCode  = !string.IsNullOrWhiteSpace(line.WhsCode) ? line.WhsCode : branchCode;
 
         return new SapDeliveryLineDto
         {

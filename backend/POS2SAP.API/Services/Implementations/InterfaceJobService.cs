@@ -128,11 +128,7 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
                         async (cf, ct, lim) => schedulerFetch
                             ? await posData.GetPendingPaymentsAsync(cf, ct, lim)
                             : await posData.GetPaymentsByFilterAsync(cf, ct, branchCode, lim));
-
-                if (!string.IsNullOrWhiteSpace(branchCode))
-                    payments = payments
-                        .Where(p => string.Equals(p.BranchCode, branchCode, StringComparison.OrdinalIgnoreCase))
-                        .ToList();
+                // Branch already filtered in SQL when applicable (see Delivery note).
             }
             catch (Exception ex)
             {
@@ -140,33 +136,47 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
                 return (0, 0, ex.Message);
             }
 
-            var alreadyApSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var existingAp = new Dictionary<string, (string Id, string Status)>(StringComparer.OrdinalIgnoreCase);
             try
             {
                 const string apExistSql = @"
-                    SELECT DISTINCT pos_doc_no FROM interface_logs
+                    SELECT id, pos_doc_no, status FROM interface_logs
                     WHERE interface_type = 'AP'
-                      AND status IN ('PENDING','PROCESSING','SUCCESS')
+                      AND status IN ('PENDING','PROCESSING','SUCCESS','RETRY')
                       AND is_deleted = 0";
                 using var dbConn = new Microsoft.Data.SqlClient.SqlConnection(gbVar.MainConstr);
                 await dbConn.OpenAsync();
-                alreadyApSet = new HashSet<string>(
-                    await dbConn.QueryAsync<string>(apExistSql),
-                    StringComparer.OrdinalIgnoreCase);
+                foreach (var row in await dbConn.QueryAsync<(string Id, string PosDocNo, string Status)>(apExistSql))
+                    existingAp.TryAdd(row.PosDocNo, (row.Id, row.Status));
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "ImportPreview AP: could not check existing AP logs");
             }
 
-            int apImported = 0, apSkipped = 0;
+            int apImported = 0, apSkipped = 0, apRefreshed = 0;
             string? apLastError = null;
             foreach (var pay in payments)
             {
-                if (alreadyApSet.Contains(pay.DocNum)) { apSkipped++; continue; }
                 try
                 {
                     var posJson = SapIncomingPaymentJsonHelper.ToJsonArray(pay);
+
+                    if (existingAp.TryGetValue(pay.DocNum, out var existing))
+                    {
+                        if (existing.Status is gbVar.StatusSuccess or gbVar.StatusProcessing)
+                        {
+                            apSkipped++;
+                            continue;
+                        }
+
+                        // Refresh POS JSON so new fields (e.g. SettlementDate/Time) apply on re-import.
+                        await monitor.UpdatePosDataAsync(existing.Id, posJson);
+                        await monitor.UpdateSapRequestAsync(existing.Id, null);
+                        apRefreshed++;
+                        continue;
+                    }
+
                     var log = new InterfaceLog
                     {
                         PosDocNo      = pay.DocNum,
@@ -184,7 +194,7 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
                     };
                     await monitor.InsertLogAsync(log);
                     apImported++;
-                    alreadyApSet.Add(pay.DocNum);
+                    existingAp[pay.DocNum] = (log.Id, gbVar.StatusPending);
                 }
                 catch (Exception ex)
                 {
@@ -192,8 +202,8 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
                     _logger.LogWarning(ex, "ImportPreview AP: skip {DocNum}", pay.DocNum);
                 }
             }
-            _logger.LogInformation("ImportPreview AP: fetched={F} skipped={S} imported={I}",
-                payments.Count, apSkipped, apImported);
+            _logger.LogInformation("ImportPreview AP: fetched={F} skipped={S} imported={I} refreshed={R}",
+                payments.Count, apSkipped, apImported, apRefreshed);
             return (payments.Count, apImported, apLastError);
         }
 
@@ -210,11 +220,7 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
                         async (cf, ct, lim) => schedulerFetch
                             ? await posData.GetPendingDeliveriesAsync(cf, ct, lim)
                             : await posData.GetDeliveriesByFilterAsync(cf, ct, branchCode, lim));
-
-                if (!string.IsNullOrWhiteSpace(branchCode))
-                    deliveries = deliveries
-                        .Where(d => string.Equals(d.BranchCode, branchCode, StringComparison.OrdinalIgnoreCase))
-                        .ToList();
+                // Branch filter already applied in SQL (shopcode / PTTShopCode / SLOC).
             }
             catch (Exception ex)
             {
@@ -270,6 +276,7 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
                         BranchName    = delivery.BranchName,
                         PosId         = delivery.POSID,
                         CardCode      = delivery.CardCode,
+                        Channel       = delivery.Channel,
                         InterfaceType = "DL",
                         DocTotal      = delivery.DocumentLines.Sum(l => decimal.TryParse(l.Quantity, out var q) ? q : 0m),
                         PosData       = posJson,
@@ -305,12 +312,10 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
                 ? await posData.GetBillsByDocNosAsync(docNoList)
                 : await FetchByDateChunksAsync(
                     importFrom, importTo, batchSize, chunkDays,
-                    (cf, ct, lim) => posData.GetPendingBillsAsync(cf, ct, lim));
-
-            if (!string.IsNullOrWhiteSpace(branchCode))
-                bills = bills
-                    .Where(b => string.Equals(b.BranchCode, branchCode, StringComparison.OrdinalIgnoreCase))
-                    .ToList();
+                    async (cf, ct, lim) => schedulerFetch
+                        ? await posData.GetPendingBillsAsync(cf, ct, lim)
+                        : await posData.GetBillsByFilterAsync(cf, ct, branchCode, lim));
+            // Branch already filtered in SQL when applicable (DTO.BranchCode is PTTShopCode; UI sends same).
         }
         catch (Exception ex)
         {
@@ -322,16 +327,20 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
         try
         {
             const string existSql = @"
-                SELECT DISTINCT pos_doc_no + '|' + ISNULL(branch_code, '')
+                SELECT pos_doc_no, ISNULL(branch_code, '') AS branch_code
                 FROM interface_logs
                 WHERE interface_type = @InterfaceType
                   AND status IN ('PENDING','PROCESSING','SUCCESS')
                   AND is_deleted = 0";
             using var dbConn = new Microsoft.Data.SqlClient.SqlConnection(gbVar.MainConstr);
             await dbConn.OpenAsync();
-            existingDocs = new HashSet<string>(
-                await dbConn.QueryAsync<string>(existSql, new { InterfaceType = mappedInterfaceType }),
-                StringComparer.OrdinalIgnoreCase);
+            foreach (var row in await dbConn.QueryAsync<(string PosDocNo, string BranchCode)>(existSql, new { InterfaceType = mappedInterfaceType }))
+            {
+                existingDocs.Add(row.PosDocNo);
+                // Legacy logs: bare ReceiptNumber — also index with branch
+                if (!row.PosDocNo.Contains(PosDocNumHelper.Separator) && !string.IsNullOrEmpty(row.BranchCode))
+                    existingDocs.Add(PosDocNumHelper.Build(row.BranchCode, row.PosDocNo));
+            }
         }
         catch (Exception ex)
         {
@@ -342,8 +351,7 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
         string? lastError = null;
         foreach (var bill in bills)
         {
-            var billKey = $"{bill.DocNum}|{bill.BranchCode}";
-            if (existingDocs.Contains(billKey)) { skipped++; continue; }
+            if (existingDocs.Contains(bill.DocNum)) { skipped++; continue; }
 
             try
             {
@@ -365,7 +373,7 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
                 };
                 await monitor.InsertLogAsync(log);
                 imported++;
-                existingDocs.Add(billKey);
+                existingDocs.Add(bill.DocNum);
             }
             catch (Exception ex)
             {
@@ -1293,6 +1301,7 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
                 BranchName    = delivery.BranchName,
                 PosId         = delivery.POSID,
                 CardCode      = delivery.CardCode,
+                Channel       = delivery.Channel,
                 InterfaceType = "DL",
                 DocTotal      = delivery.DocumentLines.Sum(l => decimal.TryParse(l.Quantity, out var q) ? q : 0m),
                 PosData       = requestJson,

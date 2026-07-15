@@ -30,13 +30,14 @@ public interface IPosDataService
     Task<List<SapIncomingPaymentDto>> GetPaymentsByFilterAsync(DateTime dateFrom, DateTime dateTo, string? branchCode, int batchSize = 500);
 
     // ------------------------------------------------------------------ Delivery
+    // Same POS sales bills as AR; mapped to SapDeliveryDto JSON schema for SAP.
 
-    /// <summary>ดึง Delivery documents เฉพาะ doc numbers ที่ระบุ</summary>
+    /// <summary>ดึงบิลขาย (เหมือน AR) แล้ว map เป็น Delivery schema ตาม doc numbers</summary>
     Task<List<SapDeliveryDto>> GetDeliveriesByDocNosAsync(IEnumerable<string> docNos);
 
-    /// <summary>ดึง Delivery documents ตามช่วงวันที่ สาขา สำหรับ Import Preview</summary>
+    /// <summary>ดึงบิลขาย (เหมือน AR) ตามช่วงวันที่/สาขา แล้ว map เป็น Delivery schema</summary>
     Task<List<SapDeliveryDto>> GetDeliveriesByFilterAsync(DateTime dateFrom, DateTime dateTo, string? branchCode, int batchSize = 500);
 
-    /// <summary>ดึง Delivery ในช่วงวันที่สำหรับ scheduler (optional: require AP SUCCESS)</summary>
+    /// <summary>ดึงบิลขายช่วงวันที่สำหรับ scheduler แล้ว map เป็น Delivery schema</summary>
     Task<List<SapDeliveryDto>> GetPendingDeliveriesAsync(DateTime dateFrom, DateTime dateTo, int batchSize = 500);
 }

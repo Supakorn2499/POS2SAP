@@ -7,7 +7,7 @@ public class SapArInvoiceLineDto
     public string ItemCode { get; set; } = string.Empty;
     public string ItemCategory { get; set; } = string.Empty;
     public string Dscription { get; set; } = string.Empty;
-    public string FreeTxt { get; set; } = string.Empty;
+    public string Text { get; set; } = string.Empty;
     public decimal Quantity { get; set; }
     public string UomCode { get; set; } = string.Empty;
     public decimal DiscPrcnt { get; set; }

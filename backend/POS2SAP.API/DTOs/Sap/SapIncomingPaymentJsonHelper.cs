@@ -25,6 +25,8 @@ public static class SapIncomingPaymentJsonHelper
         {
             DocNum     = src.DocNum ?? string.Empty,
             DocDate    = src.DocDate ?? string.Empty,
+            SettlementDate = src.SettlementDate ?? string.Empty,
+            SettlementTime = src.SettlementTime ?? string.Empty,
             DocType    = string.IsNullOrWhiteSpace(src.DocType) ? "C" : src.DocType,
             CardCode   = src.CardCode ?? string.Empty,
             CardName   = src.CardName ?? string.Empty,
