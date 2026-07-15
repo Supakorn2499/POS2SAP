@@ -35,3 +35,24 @@ export function fmtDatetime(s?: string | null): string {
 export function todayStr(): string {
   return new Date().toISOString().slice(0, 10);
 }
+
+/** Format ISO date `yyyy-MM-dd` → `dd/mm/yyyy` for UI inputs. */
+export function isoToDdMmYyyy(iso?: string | null): string {
+  if (!iso) return '';
+  const m = String(iso).slice(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return '';
+  return `${m[3]}/${m[2]}/${m[1]}`;
+}
+
+/** Parse `dd/mm/yyyy` → ISO `yyyy-MM-dd`, or null if invalid. */
+export function ddMmYyyyToIso(text: string): string | null {
+  const m = text.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!m) return null;
+  const d = Number(m[1]);
+  const mo = Number(m[2]);
+  const y = Number(m[3]);
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  const dt = new Date(y, mo - 1, d);
+  if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return null;
+  return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+}

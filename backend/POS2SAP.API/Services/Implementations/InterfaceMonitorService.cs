@@ -54,7 +54,19 @@ public class InterfaceMonitorService : IInterfaceMonitorService
         }
         if (!string.IsNullOrWhiteSpace(p.BranchCode))
         {
-            where.Add("branch_code = @BranchCode");
+            // UI dropdown uses PTTShopCode/shopcode; logs may store SLOC (SAP BranchCode)
+            where.Add(@"(
+                branch_code = @BranchCode
+                OR EXISTS (
+                    SELECT 1 FROM shop_data s
+                    WHERE (s.shopcode = @BranchCode
+                           OR ISNULL(s.PTTShopCode, '') = @BranchCode
+                           OR ISNULL(s.SLOC, '') = @BranchCode)
+                      AND (branch_code = s.SLOC
+                           OR branch_code = s.PTTShopCode
+                           OR branch_code = s.shopcode)
+                )
+            )");
             param.Add("BranchCode", p.BranchCode);
         }
         if (!string.IsNullOrWhiteSpace(p.InterfaceType))
@@ -74,12 +86,12 @@ public class InterfaceMonitorService : IInterfaceMonitorService
         }
         if (!string.IsNullOrWhiteSpace(p.DateFrom))
         {
-            where.Add("CAST(created_at AS DATE) >= @DateFrom");
+            where.Add("CAST(ISNULL(pos_doc_date, created_at) AS DATE) >= @DateFrom");
             param.Add("DateFrom", p.DateFrom);
         }
         if (!string.IsNullOrWhiteSpace(p.DateTo))
         {
-            where.Add("CAST(created_at AS DATE) <= @DateTo");
+            where.Add("CAST(ISNULL(pos_doc_date, created_at) AS DATE) <= @DateTo");
             param.Add("DateTo", p.DateTo);
         }
 
@@ -91,6 +103,14 @@ public class InterfaceMonitorService : IInterfaceMonitorService
 
         var countSql = $"SELECT COUNT(*) FROM interface_logs {whereClause}";
         var offset = (p.Page - 1) * p.PageSize;
+
+        // ponytail: IncludeJson only for export — keep normal list SELECT lean
+        var jsonCols = p.IncludeJson
+            ? @",
+                   l.pos_data      AS PosData,
+                   l.sap_request   AS SapRequest,
+                   l.sap_response  AS SapResponse"
+            : "";
 
         var dataSql = $@"
             SELECT l.id            AS Id,
@@ -109,9 +129,11 @@ public class InterfaceMonitorService : IInterfaceMonitorService
                    l.retry_count   AS RetryCount,
                    l.sent_at       AS SentAt,
                    l.created_at    AS CreatedAt,
-                   l.updated_at    AS UpdatedAt
+                   l.updated_at    AS UpdatedAt{jsonCols}
             FROM interface_logs l
-            LEFT JOIN shop_data sd ON sd.shopcode = l.branch_code
+            LEFT JOIN shop_data sd ON (sd.shopcode = l.branch_code
+                                      OR sd.PTTShopCode = l.branch_code
+                                      OR sd.SLOC = l.branch_code)
             LEFT JOIN salemode sm ON sm.SaleModeID = TRY_CAST(l.channel AS INT)
             {whereClause}
             ORDER BY {sortBy} {sortDir}
@@ -150,7 +172,9 @@ public class InterfaceMonitorService : IInterfaceMonitorService
                    l.sap_request   AS SapRequest,
                    l.sap_response  AS SapResponse
             FROM interface_logs l
-            LEFT JOIN shop_data sd ON sd.shopcode = l.branch_code
+            LEFT JOIN shop_data sd ON (sd.shopcode = l.branch_code
+                                      OR sd.PTTShopCode = l.branch_code
+                                      OR sd.SLOC = l.branch_code)
             LEFT JOIN salemode sm ON sm.SaleModeID = TRY_CAST(l.channel AS INT)
             WHERE l.id = @Id AND l.is_deleted = 0";
 
@@ -283,7 +307,9 @@ public class InterfaceMonitorService : IInterfaceMonitorService
                    l.sap_request   AS SapRequest,
                    l.sap_response  AS SapResponse
             FROM interface_logs l
-            LEFT JOIN shop_data sd ON sd.shopcode = l.branch_code
+            LEFT JOIN shop_data sd ON (sd.shopcode = l.branch_code
+                                      OR sd.PTTShopCode = l.branch_code
+                                      OR sd.SLOC = l.branch_code)
             LEFT JOIN salemode sm ON sm.SaleModeID = TRY_CAST(l.channel AS INT)
             WHERE {string.Join(" AND ", where)}
             ORDER BY l.created_at ASC";
@@ -433,7 +459,9 @@ public class InterfaceMonitorService : IInterfaceMonitorService
                 SUM(CASE WHEN l.status='SUCCESS' THEN 1 ELSE 0 END) AS Success,
                 SUM(CASE WHEN l.status='FAILED'  THEN 1 ELSE 0 END) AS Failed
             FROM interface_logs l
-            LEFT JOIN shop_data sd ON sd.shopcode = l.branch_code
+            LEFT JOIN shop_data sd ON (sd.shopcode = l.branch_code
+                                      OR sd.PTTShopCode = l.branch_code
+                                      OR sd.SLOC = l.branch_code)
             {whereClause} AND l.branch_code IS NOT NULL
             GROUP BY l.branch_code
             ORDER BY Total DESC";
@@ -446,7 +474,9 @@ public class InterfaceMonitorService : IInterfaceMonitorService
                 SUM(CASE WHEN l.status='SUCCESS' THEN 1 ELSE 0 END) AS Success,
                 SUM(CASE WHEN l.status='FAILED'  THEN 1 ELSE 0 END) AS Failed
             FROM interface_logs l
-            LEFT JOIN shop_data sd ON sd.shopcode = l.branch_code
+            LEFT JOIN shop_data sd ON (sd.shopcode = l.branch_code
+                                      OR sd.PTTShopCode = l.branch_code
+                                      OR sd.SLOC = l.branch_code)
             {whereClause} AND l.status = 'FAILED' AND l.branch_code IS NOT NULL
             GROUP BY l.branch_code
             ORDER BY Failed DESC";
@@ -470,7 +500,9 @@ public class InterfaceMonitorService : IInterfaceMonitorService
                 l.created_at    AS CreatedAt,
                 l.updated_at    AS UpdatedAt
             FROM interface_logs l
-            LEFT JOIN shop_data sd ON sd.shopcode = l.branch_code
+            LEFT JOIN shop_data sd ON (sd.shopcode = l.branch_code
+                                      OR sd.PTTShopCode = l.branch_code
+                                      OR sd.SLOC = l.branch_code)
             LEFT JOIN salemode sm ON sm.SaleModeID = TRY_CAST(l.channel AS INT)
             {whereClause}
             ORDER BY l.created_at DESC";

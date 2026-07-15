@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Trash2, Truck } from 'lucide-react';
+import { FileSpreadsheet, Trash2, Truck } from 'lucide-react';
 import { toast } from 'sonner';
 import deliveryDocTypeService from '@/services/deliveryDocTypeService';
 import {
@@ -21,6 +21,8 @@ import {
 import { useLanguage } from '@/contexts/LanguageContext';
 import type { DeliveryDocTypeDto } from '@/types/deliveryDocType';
 import { useMappingPagination } from '@/hooks/useMappingPagination';
+import { downloadCsv } from '@/lib/downloadCsv';
+import { todayStr } from '@/lib/utils';
 
 function matchesSearch(row: DeliveryDocTypeDto, q: string) {
   if (!q) return true;
@@ -96,6 +98,31 @@ export default function DeliveryDocTypePage() {
     setPendingId(null);
   }
 
+  function handleExportExcel() {
+    if (rows.length === 0) {
+      toast.error(t('exportEmpty'));
+      return;
+    }
+    const sorted = [...rows].sort((a, b) =>
+      a.documentTypeCode.localeCompare(b.documentTypeCode)
+    );
+    downloadCsv(
+      `delivery-doctype-${todayStr()}.csv`,
+      ['DocumentTypeId', 'DocumentTypeCode', 'DocumentTypeName', 'Status', 'IsEnabled'],
+      sorted.map((r) => {
+        const on = selected.has(r.documentTypeId);
+        return [
+          r.documentTypeId,
+          r.documentTypeCode,
+          r.documentTypeName,
+          on ? 'Enabled' : 'Disabled',
+          on ? 1 : 0,
+        ];
+      })
+    );
+    toast.success(t('exportSuccess', { count: sorted.length }));
+  }
+
   function handleConfirm() {
     if (!confirm || pendingId === null) return;
 
@@ -145,6 +172,17 @@ export default function DeliveryDocTypePage() {
         showClear={Boolean(search)}
         onClear={() => setSearch('')}
         clearLabel={t('clearButton')}
+        actions={
+          <button
+            type="button"
+            onClick={handleExportExcel}
+            disabled={isLoading || rows.length === 0}
+            className="inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-2 text-sm font-medium hover:bg-muted disabled:opacity-40"
+          >
+            <FileSpreadsheet className="h-4 w-4" />
+            {t('exportToExcel')}
+          </button>
+        }
       />
 
       <p className="text-xs text-muted-foreground">{t('dlDocTypeHint')}</p>

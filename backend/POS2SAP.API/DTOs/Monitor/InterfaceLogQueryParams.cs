@@ -12,4 +12,6 @@ public class InterfaceLogQueryParams
     public int PageSize { get; set; } = 20;
     public string SortBy { get; set; } = "created_at";
     public string SortDirection { get; set; } = "desc";
+    /// <summary>When true, list rows also include PosData / SapRequest / SapResponse (export use).</summary>
+    public bool IncludeJson { get; set; }
 }

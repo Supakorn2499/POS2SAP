@@ -11,6 +11,7 @@ import interfaceService from '@/services/interfaceService';
 import monitorService from '@/services/monitorService';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { fmtDate, fmt, todayStr, cn } from '@/lib/utils';
+import { DateInputDdMmYyyy } from '@/components/DateInputDdMmYyyy';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import type { ImportPreviewItem } from '@/types/import';
 
@@ -194,25 +195,21 @@ export default function ImportPage() {
           {/* Date From */}
           <div className="flex flex-col gap-1">
             <label className="text-xs text-muted-foreground">{t('importDateFrom')}</label>
-            <input
-              type="date"
+            <DateInputDdMmYyyy
               value={dateFrom}
-              onChange={e => setDateFrom(e.target.value)}
+              onChange={setDateFrom}
               disabled={isLoading}
-              className="rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
             />
           </div>
 
           {/* Date To */}
           <div className="flex flex-col gap-1">
             <label className="text-xs text-muted-foreground">{t('importDateTo')}</label>
-            <input
-              type="date"
+            <DateInputDdMmYyyy
               value={dateTo}
               min={dateFrom}
-              onChange={e => setDateTo(e.target.value)}
+              onChange={setDateTo}
               disabled={isLoading}
-              className="rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
             />
           </div>
 

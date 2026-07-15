@@ -2,15 +2,17 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { Search, X, Play, RefreshCw } from 'lucide-react';
+import { Search, X, Play, RefreshCw, Download } from 'lucide-react';
 import { toast } from 'sonner';
 import monitorService from '@/services/monitorService';
 import interfaceService from '@/services/interfaceService';
 import { StatusBadge } from '@/components/StatusBadge';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { DateInputDdMmYyyy } from '@/components/DateInputDdMmYyyy';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { fmtDate, fmtDatetime, fmt, todayStr, cn } from '@/lib/utils';
-import type { BranchOptionDto, InterfaceLogQueryParams } from '@/types/monitor';
+import { downloadCsv } from '@/lib/downloadCsv';
+import type { BranchOptionDto, InterfaceLogDto, InterfaceLogQueryParams } from '@/types/monitor';
 
 const STATUS_OPTIONS = ['', 'PENDING', 'PROCESSING', 'SUCCESS', 'FAILED', 'RETRY'];
 
@@ -82,6 +84,7 @@ export default function MonitorPage() {
   }, [params]);
 
   const [triggering, setTriggering] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [retryingId, setRetryingId] = useState<string | null>(null);
   const [sendingId, setSendingId] = useState<string | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{
@@ -137,6 +140,62 @@ export default function MonitorPage() {
     setParams({ page: 1, pageSize: 20, sortBy: 'created_at', sortDirection: 'desc', interfaceType: 'ARInvoice' });
   }
 
+  async function handleExportExcel() {
+    setExporting(true);
+    try {
+      const exportParams: InterfaceLogQueryParams = {
+        ...params,
+        page: 1,
+        pageSize: 100,
+        includeJson: true,
+      };
+      const all: InterfaceLogDto[] = [];
+      let page = 1;
+      let totalPages = 1;
+      do {
+        const res = await monitorService.getLogs({ ...exportParams, page });
+        all.push(...(res.items ?? []));
+        totalPages = res.totalPages || 1;
+        page++;
+      } while (page <= totalPages);
+
+      if (all.length === 0) {
+        toast.error(t('exportEmpty'));
+        return;
+      }
+
+      downloadCsv(
+        `monitor-${params.interfaceType || 'all'}-${todayStr()}.csv`,
+        [
+          'PosDocNo', 'PosDocDate', 'BranchCode', 'BranchName', 'Channel',
+          'InterfaceType', 'DocTotal', 'SapDocNum', 'Status', 'RetryCount',
+          'ErrorMessage', 'SentAt', 'CreatedAt', 'PosData',
+        ],
+        all.map((r) => [
+          r.posDocNo,
+          r.posDocDate ? fmtDate(r.posDocDate) : '',
+          r.branchCode ?? '',
+          r.branchName ?? '',
+          r.channel ?? '',
+          r.interfaceType ?? '',
+          r.docTotal ?? '',
+          r.sapDocNum ?? '',
+          r.status,
+          r.retryCount,
+          r.errorMessage ?? '',
+          r.sentAt ? fmtDatetime(r.sentAt) : '',
+          r.createdAt ? fmtDatetime(r.createdAt) : '',
+          r.posData ?? '',
+        ])
+      );
+      toast.success(t('exportSuccess', { count: all.length }));
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : t('exportEmpty'));
+    } finally {
+      setExporting(false);
+    }
+  }
+
   async function handleTrigger() {
     setTriggerConfirmOpen(true);
   }
@@ -146,7 +205,11 @@ export default function MonitorPage() {
     setTriggering(true);
     try {
       const result = await interfaceService.triggerManualFor(pendingInterface);
-      toast.success(t('triggerSuccess', { sent: result.sent }));
+      if (result.failed > 0) {
+        toast.error(t('triggerPartialFail', { sent: result.sent, failed: result.failed }));
+      } else {
+        toast.success(t('triggerSuccess', { sent: result.sent }));
+      }
       refetch();
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : t('triggerError'));
@@ -181,10 +244,14 @@ export default function MonitorPage() {
         confirmDialog.interfaceType,
         [confirmDialog.docNo]
       );
-      toast.success(`ส่งสำเร็จ ${result.sent} รายการ`);
+      if (result.failed > 0) {
+        toast.error(t('triggerPartialFail', { sent: result.sent, failed: result.failed }));
+      } else {
+        toast.success(t('triggerSuccess', { sent: result.sent }));
+      }
       refetch();
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : 'เกิดข้อผิดพลาดในการส่ง');
+      toast.error(err instanceof Error ? err.message : t('triggerError'));
     } finally {
       setSendingId(null);
       setConfirmDialog({ isOpen: false, docNo: '', interfaceType: '' });
@@ -227,6 +294,14 @@ export default function MonitorPage() {
           <p className="text-sm text-muted-foreground">{t('monitorSubtitle')}</p>
         </div>
         <div className="flex gap-2">
+          <button
+            onClick={() => void handleExportExcel()}
+            disabled={exporting || isLoading}
+            className="flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium hover:bg-muted disabled:opacity-50"
+          >
+            <Download className="h-4 w-4" />
+            {exporting ? t('exporting') : t('exportToExcel')}
+          </button>
           <button
             onClick={handleTrigger}
             disabled={triggering}
@@ -283,11 +358,18 @@ export default function MonitorPage() {
               </option>
             ))}
           </select>
-          <input type="date" value={pendingDateFrom} onChange={(e) => setPendingDateFrom(e.target.value)}
-            className="rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+          <DateInputDdMmYyyy
+            value={pendingDateFrom}
+            onChange={setPendingDateFrom}
+            className="w-36"
+          />
           <span className="self-center text-muted-foreground text-sm">{t('to')}</span>
-          <input type="date" value={pendingDateTo} onChange={(e) => setPendingDateTo(e.target.value)}
-            className="rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+          <DateInputDdMmYyyy
+            value={pendingDateTo}
+            min={pendingDateFrom || undefined}
+            onChange={setPendingDateTo}
+            className="w-36"
+          />
           <button onClick={handleSearch}
             className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90">
             {t('searchButton')}
@@ -360,7 +442,7 @@ export default function MonitorPage() {
                       <button
                         onClick={(e) => handleRetry(r.id, e)}
                         disabled={retryingId === r.id}
-                        className="flex items-center gap-1 rounded px-2 py-1 text-xs bg-amber-50 text-amber-700 hover:bg-amber-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="flex items-center gap-1 rounded px-2 py-1 text-xs bg-amber-50 text-amber-700 hover:bg-amber-100 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-amber-950/50 dark:text-amber-200 dark:hover:bg-amber-900/50"
                       >
                         {retryingId === r.id ? (
                           <>
@@ -378,7 +460,7 @@ export default function MonitorPage() {
                       <button
                         onClick={(e) => handleSend(r.posDocNo, 'IncomingPayment', e)}
                         disabled={sendingId === r.posDocNo}
-                        className="flex items-center gap-1 rounded px-2 py-1 text-xs bg-amber-50 text-amber-700 hover:bg-amber-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="flex items-center gap-1 rounded px-2 py-1 text-xs bg-amber-50 text-amber-700 hover:bg-amber-100 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-amber-950/50 dark:text-amber-200 dark:hover:bg-amber-900/50"
                       >
                         {sendingId === r.posDocNo ? (
                           <>
@@ -396,7 +478,7 @@ export default function MonitorPage() {
                       <button
                         onClick={(e) => handleRetry(r.id, e)}
                         disabled={retryingId === r.id}
-                        className="flex items-center gap-1 rounded px-2 py-1 text-xs bg-amber-50 text-amber-700 hover:bg-amber-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="flex items-center gap-1 rounded px-2 py-1 text-xs bg-amber-50 text-amber-700 hover:bg-amber-100 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-amber-950/50 dark:text-amber-200 dark:hover:bg-amber-900/50"
                       >
                         {retryingId === r.id ? (
                           <>

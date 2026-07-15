@@ -20,4 +20,8 @@ public class InterfaceLogDto
     public DateTime? SentAt { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
+    // Populated only when IncludeJson=true (export); null on normal list for performance
+    public string? PosData { get; set; }
+    public string? SapRequest { get; set; }
+    public string? SapResponse { get; set; }
 }

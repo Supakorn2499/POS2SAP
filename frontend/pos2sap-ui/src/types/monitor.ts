@@ -20,13 +20,13 @@ export interface InterfaceLogDto {
   sentAt?: string;
   createdAt: string;
   updatedAt: string;
-}
-
-export interface InterfaceLogDetailDto extends InterfaceLogDto {
+  /** Present when includeJson=true (export) or on detail */
   posData?: string;
   sapRequest?: string;
   sapResponse?: string;
 }
+
+export interface InterfaceLogDetailDto extends InterfaceLogDto {}
 
 export interface InterfaceLogQueryParams {
   search?: string;
@@ -39,6 +39,8 @@ export interface InterfaceLogQueryParams {
   pageSize?: number;
   sortBy?: string;
   sortDirection?: 'asc' | 'desc';
+  /** Include PosData / SapRequest / SapResponse in list rows (export). */
+  includeJson?: boolean;
 }
 
 export interface BranchOptionDto {
