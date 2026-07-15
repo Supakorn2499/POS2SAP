@@ -6,20 +6,28 @@ import './index.css';
 import App from './App.tsx';
 import { LanguageProvider } from '@/contexts/LanguageContext';
 import { AuthProvider } from '@/contexts/AuthContext';
+import { ThemeProvider, useTheme } from '@/contexts/ThemeContext';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 30_000 } },
 });
 
+function ThemedToaster() {
+  const { theme } = useTheme();
+  return <Toaster richColors position="top-right" theme={theme} />;
+}
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <LanguageProvider>
-      <AuthProvider>
-        <QueryClientProvider client={queryClient}>
-          <App />
-          <Toaster richColors position="top-right" />
-        </QueryClientProvider>
-      </AuthProvider>
-    </LanguageProvider>
+    <ThemeProvider>
+      <LanguageProvider>
+        <AuthProvider>
+          <QueryClientProvider client={queryClient}>
+            <App />
+            <ThemedToaster />
+          </QueryClientProvider>
+        </AuthProvider>
+      </LanguageProvider>
+    </ThemeProvider>
   </StrictMode>,
 );

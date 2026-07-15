@@ -1,3 +1,4 @@
+import { DateInputDdMmYyyy } from '@/components/DateInputDdMmYyyy';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { getFieldMeta, type FieldType } from '@/lib/configLayout';
 import { cn } from '@/lib/utils';
@@ -72,11 +73,10 @@ export default function ConfigFieldRow({
         );
       case 'date':
         return (
-          <input
-            type="date"
+          <DateInputDdMmYyyy
             value={value}
-            onChange={(e) => onChange(storageKey, e.target.value)}
-            className={inputClass}
+            onChange={(iso) => onChange(storageKey, iso)}
+            className="max-w-xs"
           />
         );
       case 'time':

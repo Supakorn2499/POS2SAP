@@ -9,13 +9,16 @@ import {
   FolderInput,
   Map,
   Layers,
-  Truck,
   PanelLeftClose,
   PanelLeftOpen,
+  ScrollText,
+  Moon,
+  Sun,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useAuth } from '@/contexts/AuthContext';
+import { useTheme } from '@/contexts/ThemeContext';
 
 const SIDEBAR_COLLAPSED_KEY = 'pos2sapSidebarCollapsed';
 
@@ -25,7 +28,7 @@ const navItems = [
   { to: '/import',    labelKey: 'importSidebarLabel', icon: FolderInput,     end: true  },
   { to: '/glmapping', labelKey: 'glMapping',          icon: Map,             end: true  },
   { to: '/productgroupmapping', labelKey: 'pgMapping', icon: Layers,        end: true  },
-  { to: '/delivery-doctype', labelKey: 'dlDocType',   icon: Truck,         end: true  },
+  { to: '/app-logs',  labelKey: 'appLogs',            icon: ScrollText,      end: true  },
   { to: '/config',    labelKey: 'config',             icon: Settings,        end: true  },
 ];
 
@@ -46,6 +49,7 @@ export function AppLayout() {
   const location = useLocation();
   const { lang, setLang, t } = useLanguage();
   const { logout } = useAuth();
+  const { theme, toggleTheme } = useTheme();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true'
   );
@@ -146,6 +150,15 @@ export function AppLayout() {
               )}
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={toggleTheme}
+                aria-label={t('themeToggle')}
+                title={theme === 'dark' ? t('themeLight') : t('themeDark')}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-input bg-background text-foreground transition hover:bg-muted"
+              >
+                {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+              </button>
               <div className="inline-flex items-center gap-2 rounded-full border border-input bg-background p-1">
                 {(['th', 'en'] as const).map((code) => (
                   <button

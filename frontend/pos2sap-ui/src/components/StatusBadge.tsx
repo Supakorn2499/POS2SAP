@@ -4,11 +4,26 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import type { InterfaceStatus } from '@/types/monitor';
 
 const statusConfig: Record<InterfaceStatus, { labelKey: string; className: string }> = {
-  PENDING:    { labelKey: 'statusLabel.PENDING',    className: 'bg-yellow-100 text-yellow-800 border-yellow-300' },
-  PROCESSING: { labelKey: 'statusLabel.PROCESSING', className: 'bg-blue-100 text-blue-800 border-blue-300' },
-  SUCCESS:    { labelKey: 'statusLabel.SUCCESS',    className: 'bg-green-100 text-green-800 border-green-300' },
-  FAILED:     { labelKey: 'statusLabel.FAILED',     className: 'bg-red-100 text-red-800 border-red-300' },
-  RETRY:      { labelKey: 'statusLabel.RETRY',      className: 'bg-orange-100 text-orange-800 border-orange-300' },
+  PENDING: {
+    labelKey: 'statusLabel.PENDING',
+    className: 'bg-yellow-100 text-yellow-800 border-yellow-300 dark:bg-amber-950/70 dark:text-amber-200 dark:border-amber-500/40',
+  },
+  PROCESSING: {
+    labelKey: 'statusLabel.PROCESSING',
+    className: 'bg-blue-100 text-blue-800 border-blue-300 dark:bg-sky-950/70 dark:text-sky-200 dark:border-sky-500/40',
+  },
+  SUCCESS: {
+    labelKey: 'statusLabel.SUCCESS',
+    className: 'bg-green-100 text-green-800 border-green-300 dark:bg-emerald-950/70 dark:text-emerald-200 dark:border-emerald-500/40',
+  },
+  FAILED: {
+    labelKey: 'statusLabel.FAILED',
+    className: 'bg-red-100 text-red-800 border-red-300 dark:bg-rose-950/70 dark:text-rose-200 dark:border-rose-500/40',
+  },
+  RETRY: {
+    labelKey: 'statusLabel.RETRY',
+    className: 'bg-orange-100 text-orange-800 border-orange-300 dark:bg-orange-950/70 dark:text-orange-200 dark:border-orange-500/40',
+  },
 };
 
 interface Props {
@@ -18,7 +33,6 @@ interface Props {
 
 export function StatusBadge({ status, size = 'md' }: Props) {
   const { t } = useLanguage();
-  // Extract base status (handle cases with extra text after space)
   const baseStatus = (status as string).split(' ')[0].toUpperCase() as InterfaceStatus;
   const config = statusConfig[baseStatus];
   const label = config ? t(config.labelKey) : String(status);
@@ -27,7 +41,7 @@ export function StatusBadge({ status, size = 'md' }: Props) {
     <span className={cn(
       'inline-flex items-center rounded-full border font-medium',
       size === 'sm' ? 'px-2 py-0.5 text-xs' : 'px-2.5 py-0.5 text-sm',
-      config?.className ?? 'bg-gray-100 text-gray-700 border-gray-300'
+      config?.className ?? 'bg-gray-100 text-gray-700 border-gray-300 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-600'
     )}>
       {label}
     </span>
