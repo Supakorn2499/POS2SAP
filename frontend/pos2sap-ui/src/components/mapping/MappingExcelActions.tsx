@@ -2,7 +2,9 @@
 import { useRef, useState } from 'react';
 import { Download, Upload } from 'lucide-react';
 import { toast } from 'sonner';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { decodeCsvBytes, parseCsv } from '@/lib/parseCsv';
 
 type Props = {
   onExport: () => void;
@@ -26,6 +28,7 @@ export function MappingExcelActions({
   const { t } = useLanguage();
   const inputRef = useRef<HTMLInputElement>(null);
   const [importing, setImporting] = useState(false);
+  const [pending, setPending] = useState<{ text: string; fileName: string; count: number } | null>(null);
 
   async function handleFile(file: File | undefined) {
     if (!file) return;
@@ -35,16 +38,35 @@ export function MappingExcelActions({
       if (inputRef.current) inputRef.current.value = '';
       return;
     }
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const text = decodeCsvBytes(bytes);
+      const { rows } = parseCsv(text);
+      if (rows.length === 0) {
+        toast.error(t('importMappingEmpty'));
+        return;
+      }
+      // Always confirm before applying import
+      setPending({ text, fileName: file.name, count: rows.length });
+    } catch (err: unknown) {
+      console.error(err);
+      toast.error(err instanceof Error ? err.message : t('importMappingInvalid'));
+    } finally {
+      if (inputRef.current) inputRef.current.value = '';
+    }
+  }
+
+  async function confirmImport() {
+    if (!pending) return;
     setImporting(true);
     try {
-      const text = await file.text();
-      await onImportText(text);
+      await onImportText(pending.text);
     } catch (err: unknown) {
       console.error(err);
       toast.error(err instanceof Error ? err.message : t('importMappingInvalid'));
     } finally {
       setImporting(false);
-      if (inputRef.current) inputRef.current.value = '';
+      setPending(null);
     }
   }
 
@@ -63,7 +85,7 @@ export function MappingExcelActions({
         <button
           type="button"
           onClick={() => inputRef.current?.click()}
-          disabled={disabled || importing}
+          disabled={disabled || importing || pending != null}
           className="inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-2 text-sm font-medium hover:bg-muted disabled:opacity-40"
         >
           <Upload className="h-4 w-4" />
@@ -78,6 +100,20 @@ export function MappingExcelActions({
         />
       </div>
       <p className="text-[11px] text-muted-foreground">{t('importCsvHint')}</p>
+
+      <ConfirmDialog
+        isOpen={pending != null}
+        title={t('importMappingConfirmTitle')}
+        message={t('importMappingConfirmMsg', {
+          file: pending?.fileName ?? '',
+          count: pending?.count ?? 0,
+        })}
+        confirmText={t('importMappingConfirmYes')}
+        cancelText={t('cancel')}
+        isLoading={importing}
+        onConfirm={() => void confirmImport()}
+        onCancel={() => setPending(null)}
+      />
     </div>
   );
 }

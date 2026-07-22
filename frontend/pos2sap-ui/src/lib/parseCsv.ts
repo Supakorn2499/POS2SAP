@@ -1,7 +1,13 @@
-/** Minimal RFC4180-ish CSV parser (Excel UTF-8 / BOM friendly). */
+/** Minimal RFC4180-ish CSV parser (Excel UTF-8 / BOM / Thai-locale semicolon friendly). */
 export function parseCsv(text: string): { headers: string[]; rows: Record<string, string>[] } {
   const cleaned = text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-  const records = splitCsvRecords(cleaned);
+  if (!cleaned.trim()) return { headers: [], rows: [] };
+
+  const firstLineEnd = cleaned.indexOf('\n');
+  const headerLine = firstLineEnd >= 0 ? cleaned.slice(0, firstLineEnd) : cleaned;
+  const delimiter = detectCsvDelimiter(headerLine);
+
+  const records = splitCsvRecords(cleaned, delimiter);
   if (records.length === 0) return { headers: [], rows: [] };
 
   const headers = records[0].map((h) => h.trim());
@@ -18,7 +24,25 @@ export function parseCsv(text: string): { headers: string[]; rows: Record<string
   return { headers, rows };
 }
 
-function splitCsvRecords(text: string): string[][] {
+/** Thai Excel often Save As CSV with ';' — pick whichever appears more in the header. */
+export function detectCsvDelimiter(headerLine: string): ',' | ';' {
+  let commas = 0;
+  let semis = 0;
+  let inQuotes = false;
+  for (let i = 0; i < headerLine.length; i++) {
+    const ch = headerLine[i];
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (inQuotes) continue;
+    if (ch === ',') commas++;
+    else if (ch === ';') semis++;
+  }
+  return semis > commas ? ';' : ',';
+}
+
+function splitCsvRecords(text: string, delimiter: ',' | ';' = ','): string[][] {
   const records: string[][] = [];
   let row: string[] = [];
   let cell = '';
@@ -42,7 +66,7 @@ function splitCsvRecords(text: string): string[][] {
 
     if (ch === '"') {
       inQuotes = true;
-    } else if (ch === ',') {
+    } else if (ch === delimiter) {
       row.push(cell);
       cell = '';
     } else if (ch === '\n') {
@@ -90,4 +114,55 @@ export function csvCell(row: Record<string, string>, ...names: string[]): string
     if (found) return row[found] ?? '';
   }
   return '';
+}
+
+function countThaiChars(s: string): number {
+  let n = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c >= 0x0e00 && c <= 0x0e7f) n++;
+  }
+  return n;
+}
+
+function countReplacementChars(s: string): number {
+  let n = 0;
+  for (let i = 0; i < s.length; i++) {
+    if (s.charCodeAt(i) === 0xfffd) n++;
+  }
+  return n;
+}
+
+/**
+ * Decode CSV file bytes for Excel-on-Thai-Windows.
+ * Export from this app is UTF-8 BOM; Excel "CSV" Save As is often Windows-874 (not UTF-8).
+ */
+export function decodeCsvBytes(bytes: Uint8Array): string {
+  if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
+    return new TextDecoder('utf-8').decode(bytes);
+  }
+  if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) {
+    return new TextDecoder('utf-16le').decode(bytes);
+  }
+  if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
+    return new TextDecoder('utf-16be').decode(bytes);
+  }
+
+  const utf8 = new TextDecoder('utf-8').decode(bytes);
+  let ansi = '';
+  try {
+    ansi = new TextDecoder('windows-874').decode(bytes);
+  } catch {
+    return utf8;
+  }
+
+  const utf8Thai = countThaiChars(utf8);
+  const ansiThai = countThaiChars(ansi);
+  const utf8Bad = countReplacementChars(utf8);
+
+  // Thai Excel ANSI CSV: UTF-8 decode looks broken / has no Thai while windows-874 has Thai
+  if (ansiThai > 0 && (utf8Bad > 0 || ansiThai > utf8Thai)) {
+    return ansi;
+  }
+  return utf8;
 }

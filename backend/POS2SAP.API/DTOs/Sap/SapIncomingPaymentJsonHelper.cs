@@ -45,6 +45,7 @@ public static class SapIncomingPaymentJsonHelper
             DocCur     = string.IsNullOrWhiteSpace(src.DocCur) ? "THB" : src.DocCur,
             BranchCode = src.BranchCode ?? string.Empty,
             BranchName = src.BranchName ?? string.Empty,
+            VatBranch  = src.VatBranch ?? string.Empty,
             Channel    = src.Channel ?? string.Empty,
             Comments   = src.Comments ?? string.Empty,
 
@@ -66,7 +67,7 @@ public static class SapIncomingPaymentJsonHelper
                     DocNum         = cc.DocNum ?? src.DocNum ?? string.Empty,
                     LineNum        = cc.LineNum >= 0 ? cc.LineNum : i,
                     CreditCard     = cc.CreditCard ?? string.Empty,
-                    CreditAcct     = cc.CreditAcct ?? string.Empty,
+                    CreditAcct     = string.Empty, // SAP: never send GL on credit-card lines
                     CrCardNum      = cc.CrCardNum ?? string.Empty,
                     CardValid      = cc.CardValid ?? string.Empty,
                     CreditCardBank = cc.CreditCardBank ?? string.Empty,

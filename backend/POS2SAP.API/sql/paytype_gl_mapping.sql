@@ -6,6 +6,7 @@
 --   CASH        → CashAcct + CashSum (sum all pay rows in this category)
 --   TRANSFER    → TrsfrAcct + TrsfrSum + TrsfrDate + TrsfrRef (sum all rows)
 --   CREDIT_CARD → paymentCreditCards[] one line per pay row
+--                 SapPayTypeName MUST be SAP OCRC CreditCard code (e.g. '1'), NOT a display name
 --   SKIP        → excluded from Incoming Payment JSON
 -- ============================================================
 
@@ -17,7 +18,7 @@ BEGIN
         PayTypeName     NVARCHAR(100) NULL,          -- copy จาก paytype สำหรับ reference
         SapPayCategory  NVARCHAR(20)  NOT NULL DEFAULT 'SKIP',  -- CASH | TRANSFER | CREDIT_CARD | SKIP
         SapGlAccount    NVARCHAR(50)  NULL,          -- รหัส GL บัญชี SAP (ใส่หลังได้รับ mapping จาก SAP)
-        SapPayTypeName  NVARCHAR(100) NULL,          -- ชื่อที่ใช้ใน SAP paymentCreditCards.CreditCard field
+        SapPayTypeName  NVARCHAR(100) NULL,          -- CREDIT_CARD only: SAP OCRC CreditCard code (e.g. 1), NOT a Thai/English label
         IsActive        TINYINT       NOT NULL DEFAULT 1,
         SortOrder       INT           NOT NULL DEFAULT 0,
         Remarks         NVARCHAR(200) NULL,
@@ -32,8 +33,10 @@ ELSE
     PRINT 'Table paytype_gl_mapping already exists — skipping CREATE';
 
 -- ============================================================
--- Seed data — SapGlAccount ใส่เป็น placeholder '[GL-PENDING]'
--- ให้แก้ไข SapGlAccount ให้ตรงกับ GL บัญชีจริงของ SAP
+-- Seed data — SapGlAccount / SapPayTypeName are placeholders
+--   SapGlAccount   → replace '[GL-PENDING]' with real SAP GL
+--   SapPayTypeName → for CREDIT_CARD replace '[OCRC-PENDING]' with real OCRC code
+-- WARNING: DELETE below wipes the table — run only on fresh setup
 -- ============================================================
 
 -- ลบ seed เก่าถ้ามีแล้ว insert ใหม่ (idempotent)
@@ -46,27 +49,27 @@ VALUES
 -- -----------------------------------------------------------
 -- CASH
 -- -----------------------------------------------------------
-(1,   'Cash',                     'CASH',         '[GL-PENDING]', 'Cash',                     1, 10, 'เงินสด'),
+(1,   'Cash',                     'CASH',         '[GL-PENDING]', NULL,                       1, 10, 'เงินสด'),
 
 -- -----------------------------------------------------------
--- CREDIT_CARD — บัตรเครดิต (พักบัญชีรอเคลียร์)
+-- CREDIT_CARD — SapPayTypeName = SAP OCRC code (ask SAP team), not a display name
 -- -----------------------------------------------------------
-(2,   'Credit Card',              'CREDIT_CARD',  '[GL-PENDING]', 'พักบัตรเครดิตรอเคลียร์',  1, 20, 'บัตรเครดิตทุกธนาคาร'),
+(2,   'Credit Card',              'CREDIT_CARD',  '[GL-PENDING]', '[OCRC-PENDING]',           1, 20, 'บัตรเครดิตทุกธนาคาร — ใส่รหัส OCRC จริง'),
 
 -- -----------------------------------------------------------
--- CREDIT_CARD — แพลตฟอร์ม Delivery (ใช้บัญชีพักรอรับเงินจากแพลตฟอร์ม)
+-- CREDIT_CARD — delivery platforms / vouchers (each needs its own OCRC code if used as CREDIT_CARD)
 -- -----------------------------------------------------------
-(148, 'Grabfood Payment',         'CREDIT_CARD',  '[GL-PENDING]', 'Grabfood',                 1, 30, 'ยอดขาย Grabfood'),
-(149, 'Robinhood Payment',        'CREDIT_CARD',  '[GL-PENDING]', 'Robinhood',                1, 31, 'ยอดขาย Robinhood'),
-(150, 'FoodPanda Payment',        'CREDIT_CARD',  '[GL-PENDING]', 'FoodPanda',                1, 32, 'ยอดขาย FoodPanda'),
-(151, 'Lineman Payment',          'CREDIT_CARD',  '[GL-PENDING]', 'Lineman',                  1, 33, 'ยอดขาย Lineman'),
+(148, 'Grabfood Payment',         'CREDIT_CARD',  '[GL-PENDING]', '[OCRC-PENDING]',           1, 30, 'ยอดขาย Grabfood'),
+(149, 'Robinhood Payment',        'CREDIT_CARD',  '[GL-PENDING]', '[OCRC-PENDING]',           1, 31, 'ยอดขาย Robinhood'),
+(150, 'FoodPanda Payment',        'CREDIT_CARD',  '[GL-PENDING]', '[OCRC-PENDING]',           1, 32, 'ยอดขาย FoodPanda'),
+(151, 'Lineman Payment',          'CREDIT_CARD',  '[GL-PENDING]', '[OCRC-PENDING]',           1, 33, 'ยอดขาย Lineman'),
 
 -- -----------------------------------------------------------
--- CREDIT_CARD — Voucher (แต่ละประเภทอาจใช้ GL ต่างกัน)
+-- CREDIT_CARD — Voucher
 -- -----------------------------------------------------------
-(152, 'Voucher One Bangkok',      'CREDIT_CARD',  '[GL-PENDING]', 'Voucher One Bangkok',      1, 40, 'Voucher One Bangkok'),
-(153, 'MEGA VOUCHER 500',         'CREDIT_CARD',  '[GL-PENDING]', 'MEGA VOUCHER 500',         1, 41, 'Voucher มูลค่า 500'),
-(154, 'MEGA VOUCHER 100',         'CREDIT_CARD',  '[GL-PENDING]', 'MEGA VOUCHER 100',         1, 42, 'Voucher มูลค่า 100'),
+(152, 'Voucher One Bangkok',      'CREDIT_CARD',  '[GL-PENDING]', '[OCRC-PENDING]',           1, 40, 'Voucher One Bangkok'),
+(153, 'MEGA VOUCHER 500',         'CREDIT_CARD',  '[GL-PENDING]', '[OCRC-PENDING]',           1, 41, 'Voucher มูลค่า 500'),
+(154, 'MEGA VOUCHER 100',         'CREDIT_CARD',  '[GL-PENDING]', '[OCRC-PENDING]',           1, 42, 'Voucher มูลค่า 100'),
 
 -- -----------------------------------------------------------
 -- SKIP — ไม่ส่ง SAP
@@ -82,9 +85,15 @@ VALUES
 -- TRANSFER — เตรียมไว้สำหรับ PayType โอนเงินธนาคาร/PromptPay
 --            (ปัจจุบัน IsAvailable=0 ใน paytype — เพิ่มเมื่อใช้งาน)
 -- -----------------------------------------------------------
--- (138, 'Online Prompt Pay', 'TRANSFER', '[GL-PENDING]', 'Prompt Pay', 0, 50, 'PromptPay — ยังไม่เปิดใช้งาน')
+-- (138, 'Online Prompt Pay', 'TRANSFER', '[GL-PENDING]', NULL, 0, 50, 'PromptPay — ยังไม่เปิดใช้งาน')
 
-PRINT 'Seeded paytype_gl_mapping — *** กรุณาอัปเดต SapGlAccount จาก [GL-PENDING] เป็นรหัส GL จริง ***';
+PRINT 'Seeded paytype_gl_mapping — update [GL-PENDING] and CREDIT_CARD [OCRC-PENDING] to real SAP codes';
+
+-- Manual fix for existing DBs that stored a Thai display name as CreditCard code:
+-- UPDATE paytype_gl_mapping
+-- SET SapPayTypeName = N'1',  -- <-- replace with real OCRC CreditCard code from SAP
+--     UpdatedAt = GETDATE()
+-- WHERE PayTypeID = 2 AND SapPayTypeName = N'พักบัตรเครดิตรอเคลียร์';
 
 -- ============================================================
 -- Seed interface_configs สำหรับ IncomingPayment

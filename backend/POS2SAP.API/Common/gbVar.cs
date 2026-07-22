@@ -50,4 +50,16 @@ public static class gbVar
     public const string SapPayCategoryTransfer    = "TRANSFER";
     public const string SapPayCategoryCreditCard  = "CREDIT_CARD";
     public const string SapPayCategorySkip        = "SKIP";
+
+    // AR Invoice — synthetic negative discount / promo lines
+    public const string SapArItemCoupon       = "RV-DC-0001";
+    public const string SapArCatCoupon        = "DC";
+    public const string SapArItemGiftVoucher  = "RV-CP-0001";
+    public const string SapArCatGiftVoucher   = "GV";
+    public const string SapArItemFreebie      = "";
+    public const string SapArCatFreebie       = "OP";
+    public const string SapArItemRedeem       = "RV-RD-0001";
+    public const string SapArCatRedeem        = "RD";
+    public const string SapArItemServiceCharge = "SC";
+    public const string SapArCatServiceCharge   = "SC";
 }

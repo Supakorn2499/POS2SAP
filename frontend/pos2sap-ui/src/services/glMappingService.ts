@@ -14,7 +14,10 @@ const glMappingService = {
 
   async upsert(dto: UpsertGlMappingDto): Promise<boolean> {
     const res = await apiClient.post('/glmapping', dto);
-    return res.data.success;
+    if (!res.data?.success) {
+      throw new Error(res.data?.message || 'Upsert GL mapping failed');
+    }
+    return true;
   },
 
   async remove(payTypeId: number): Promise<boolean> {

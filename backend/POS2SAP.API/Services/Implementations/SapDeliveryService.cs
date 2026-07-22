@@ -129,7 +129,7 @@ public class SapDeliveryService : ISapDeliveryService
         }
     }
 
-    private static (bool IsSuccess, string? SapDocNum, string? ErrMsg, bool IsDraft) ParseSapResponseBody(string raw)
+    internal static (bool IsSuccess, string? SapDocNum, string? ErrMsg, bool IsDraft) ParseSapResponseBody(string raw)
     {
         try
         {

@@ -31,6 +31,7 @@ public class SapIncomingPaymentDto
     public string DocCur { get; set; } = "THB";  // gbVar.SapDocCur
     public string BranchCode { get; set; } = string.Empty;
     public string BranchName { get; set; } = string.Empty;
+    public string VatBranch { get; set; } = string.Empty; // shop_data.BranchNo (same as AR Invoice)
     public string Channel { get; set; } = string.Empty;
     public string Comments { get; set; } = string.Empty;
 
@@ -61,8 +62,8 @@ public class SapPaymentCreditCardDto
 {
     public string DocNum { get; set; } = string.Empty;    // same as head DocNum
     public int LineNum { get; set; }                      // 0-based index within transaction
-    public string CreditCard { get; set; } = string.Empty; // paytype_gl_mapping.SapPayTypeName
-    public string CreditAcct { get; set; } = string.Empty; // paytype_gl_mapping.SapGlAccount
+    public string CreditCard { get; set; } = string.Empty; // paytype_gl_mapping.SapPayTypeName = SAP OCRC code
+    public string CreditAcct { get; set; } = string.Empty; // always empty for SAP credit-card payments
     public string CrCardNum { get; set; } = string.Empty;  // orderpaydetail.CreditCardNo (last 4)
     public string CardValid { get; set; } = string.Empty;  // "YYYY-MM-DD" from ExpireYear/ExpireMonth
     public string CreditCardBank { get; set; } = string.Empty;

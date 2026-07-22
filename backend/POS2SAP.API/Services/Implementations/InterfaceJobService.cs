@@ -164,15 +164,18 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
 
                     if (existingAp.TryGetValue(pay.DocNum, out var existing))
                     {
-                        if (existing.Status is gbVar.StatusSuccess or gbVar.StatusProcessing)
+                        // PROCESSING: in-flight — do not touch
+                        if (existing.Status == gbVar.StatusProcessing)
                         {
                             apSkipped++;
                             continue;
                         }
 
-                        // Refresh POS JSON so new fields (e.g. SettlementDate/Time) apply on re-import.
+                        // Always refresh PosData so mapping/field changes show in Monitor after re-import
+                        // (including SUCCESS — status stays SUCCESS; only JSON snapshot updates).
                         await monitor.UpdatePosDataAsync(existing.Id, posJson);
-                        await monitor.UpdateSapRequestAsync(existing.Id, null);
+                        if (existing.Status != gbVar.StatusSuccess)
+                            await monitor.UpdateSapRequestAsync(existing.Id, null);
                         apRefreshed++;
                         continue;
                     }
@@ -933,19 +936,26 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
 
         payment = SapIncomingPaymentJsonHelper.Normalize(payment);
 
-        if (!await EnsureArInvoiceReadyAsync(monitor, payment))
+        var (arReady, arSkipReason) = await EnsureArInvoiceReadyAsync(monitor, payment);
+        if (!arReady)
+        {
+            await monitor.UpdateStatusAsync(log.Id, log.Status, arSkipReason);
             return null;
+        }
 
         return payment;
     }
 
-    private async Task<bool> EnsureArInvoiceReadyAsync(IInterfaceMonitorService monitor, SapIncomingPaymentDto payment)
+    private async Task<(bool Ready, string? SkipReason)> EnsureArInvoiceReadyAsync(
+        IInterfaceMonitorService monitor,
+        SapIncomingPaymentDto payment)
     {
         var arLog = await GetArSuccessLogAsync(monitor, payment.DocNum);
         if (arLog is null)
         {
+            const string reason = "AP skipped: AR invoice not yet SUCCESS — send AR first";
             _logger.LogWarning("AP skipped for {DocNo}: AR invoice not yet SUCCESS", payment.DocNum);
-            return false;
+            return (false, reason);
         }
 
         var line = payment.PaymentInvoices.FirstOrDefault();
@@ -955,8 +965,9 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
             var invoiceNum = SapIncomingPaymentJsonHelper.TryExtractArInvoiceDocNum(arDetail?.SapRequest);
             if (string.IsNullOrWhiteSpace(invoiceNum))
             {
+                const string reason = "AP skipped: cannot resolve AR InvoiceNum from SUCCESS AR log";
                 _logger.LogWarning("AP skipped for {DocNo}: cannot resolve AR InvoiceNum", payment.DocNum);
-                return false;
+                return (false, reason);
             }
 
             if (line is null)
@@ -979,7 +990,7 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
             }
         }
 
-        return true;
+        return (true, null);
     }
 
     private static async Task<InterfaceLogDto?> GetArSuccessLogAsync(IInterfaceMonitorService monitor, string docNum)
@@ -1005,8 +1016,12 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
     {
         payment = SapIncomingPaymentJsonHelper.Normalize(payment);
 
-        if (!await EnsureArInvoiceReadyAsync(monitor, payment))
+        var (arReady, arSkipReason) = await EnsureArInvoiceReadyAsync(monitor, payment);
+        if (!arReady)
+        {
+            await monitor.UpdateStatusAsync(log.Id, log.Status, arSkipReason);
             return (0, 1);
+        }
 
         var requestJson = SapIncomingPaymentJsonHelper.ToJsonArray(payment);
 
@@ -1046,8 +1061,22 @@ public class InterfaceJobService : BackgroundService, IInterfaceJobService
     {
         payment = SapIncomingPaymentJsonHelper.Normalize(payment);
 
-        if (!await EnsureArInvoiceReadyAsync(monitor, payment))
+        var (arReady, arSkipReason) = await EnsureArInvoiceReadyAsync(monitor, payment);
+        if (!arReady)
+        {
+            var pendingAp = (await monitor.GetListAsync(new DTOs.Monitor.InterfaceLogQueryParams
+            {
+                Search = payment.DocNum,
+                PageSize = 5
+            })).Items.FirstOrDefault(x =>
+                x.PosDocNo == payment.DocNum &&
+                string.Equals(x.InterfaceType, "AP", StringComparison.OrdinalIgnoreCase));
+
+            if (pendingAp is not null)
+                await monitor.UpdateStatusAsync(pendingAp.Id, pendingAp.Status, arSkipReason);
+
             return (0, 1);
+        }
 
         var existing = (await monitor.GetListAsync(new DTOs.Monitor.InterfaceLogQueryParams
         {

@@ -130,7 +130,7 @@ public class SapIncomingPaymentService : ISapIncomingPaymentService
         }
     }
 
-    private static (bool IsSuccess, string? SapDocNum, string? ErrMsg) ParseSapResponseBody(string raw)
+    internal static (bool IsSuccess, string? SapDocNum, string? ErrMsg) ParseSapResponseBody(string raw)
     {
         try
         {

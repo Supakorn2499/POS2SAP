@@ -14,6 +14,7 @@ import {
   ScrollText,
   Moon,
   Sun,
+  BookOpen,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -29,6 +30,7 @@ const navItems = [
   { to: '/glmapping', labelKey: 'glMapping',          icon: Map,             end: true  },
   { to: '/productgroupmapping', labelKey: 'pgMapping', icon: Layers,        end: true  },
   { to: '/app-logs',  labelKey: 'appLogs',            icon: ScrollText,      end: true  },
+  { to: '/guide',     labelKey: 'userGuide',          icon: BookOpen,        end: true  },
   { to: '/config',    labelKey: 'config',             icon: Settings,        end: true  },
 ];
 
@@ -96,8 +98,8 @@ export function AppLayout() {
         >
           {!sidebarCollapsed && (
             <div className="min-w-0">
-              <h1 className="text-base font-bold text-foreground">POS2SAP</h1>
-              <p className="text-xs text-muted-foreground mt-0.5 truncate">POS → SAP B1 Interface</p>
+              <h1 className="text-base font-bold tracking-tight text-foreground">POS2SAP</h1>
+              <p className="mt-0.5 truncate text-xs font-medium text-muted-foreground">POS → SAP B1 Interface</p>
             </div>
           )}
           <button

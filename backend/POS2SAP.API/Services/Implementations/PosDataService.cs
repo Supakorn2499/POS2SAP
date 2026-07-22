@@ -50,20 +50,28 @@ public class PosDataService : IPosDataService
                 ELSE NULL END                                            AS Address,
                 CASE WHEN ft.FullTaxInvoiceID IS NOT NULL THEN ft.InvoiceCompanyBranchNo ELSE NULL END
                                                                          AS CustVatBranch,
-                CASE WHEN ft.FullTaxInvoiceID IS NOT NULL THEN ft.InvoiceTelephone ELSE NULL END
+                CASE WHEN ft.FullTaxInvoiceID IS NOT NULL THEN ft.InvoiceTelephone
+                     ELSE ISNULL(NULLIF(m.MemberMobile, ''), m.MemberTelephone) END
                                                                          AS CustTel,
-                a.MemberID                                               AS CustMemberNo,
+                CASE WHEN ISNULL(a.MemberID, 0) > 0
+                     THEN ISNULL(NULLIF(LTRIM(RTRIM(m.MemberCode)), ''), CAST(a.MemberID AS NVARCHAR(20)))
+                     ELSE '' END                                         AS CustMemberNo,
                 ISNULL(s.BranchNo, '')                                   AS VatBranch,
                 a.TransactionNote                                        AS Comments,
                 ISNULL(sm.SaleModeName, CAST(a.SaleMode AS NVARCHAR(20))) AS Channel,
-                NULL                                                     AS CustBillPoint,
-                NULL                                                     AS CustRedeemPoing,
-                NULL                                                     AS CustBalancePoint,
-                ISNULL(a.ReceiptRetailPrice, 0)                          AS TotalAmtBefDis,
-                0                                                        AS DiscPrcnt,
-                NULL                                                     AS DownPaymentNo,
-                NULL                                                     AS DownPaymentAmt,
+                mpoint.EarnPoint                                         AS CustBillPoint,
+                mpoint.RedeemPoint                                       AS CustRedeemPoing,
+                rps.TotalPoint                                           AS CustBalancePoint,
+                -- VATable (ex-VAT) per receipt; DiscPrcnt still uses VAT-inc ReceiptRetailPrice
+                ISNULL(a.TranBeforeVAT, 0)                               AS TotalAmtBefDis,
+                ISNULL(a.ReceiptRetailPrice, 0)                          AS ReceiptRetailPrice,
+                ISNULL(a.ReceiptDiscount, 0)                             AS ReceiptDiscount,
                 ISNULL(a.ReceiptPayPrice, 0)                             AS DocTotal,
+                ISNULL(dep.DownPaymentNo, '')                            AS DownPaymentNo,
+                ISNULL(dep.DownPaymentAmt, 0)                            AS DownPaymentAmt,
+                ISNULL(a.ServiceCharge, 0)                               AS ServiceCharge,
+                ISNULL(a.ServiceChargeVAT, 0)                            AS ServiceChargeVat,
+                ISNULL(a.SCBeforeVAT, 0)                                 AS ServiceChargeBeforeVat,
                 a.TranKey";
 
     private const string ArInvoiceHeadJoins = @"
@@ -81,7 +89,38 @@ public class PosDataService : IPosDataService
             LEFT JOIN ordertransactionfulltaxinvoice ft
                 ON ft.FullTaxInvoiceID = ftlink.FullTaxInvoiceID
                 AND ft.FullTaxInvoiceComputerID = ftlink.FullTaxInvoiceComputerID
-                AND ft.FullTaxStatus = 2";
+                AND ft.FullTaxStatus = 2
+            LEFT JOIN members m
+                ON m.MemberID = a.MemberID AND a.MemberID > 0 AND ISNULL(m.Deleted, 0) = 0
+            OUTER APPLY (
+                SELECT TOP 1 rp.TotalPoint
+                FROM RewardPointSummary rp
+                WHERE rp.MemberID = a.MemberID AND a.MemberID > 0
+                ORDER BY rp.UpdateDate DESC
+            ) rps
+            OUTER APPLY (
+                -- RewardPointType: 1=Earn 2=Redeem 3=Void Earn 4=Void Redeem 5=Redeem to eCoupon 6=Adjust
+                -- TranPoint = points for this bill (TotalPointPrice is the bill amount, not points)
+                SELECT
+                    SUM(CASE WHEN ph.PointType = 1 THEN ph.TranPoint ELSE 0 END)            AS EarnPoint,
+                    ABS(SUM(CASE WHEN ph.PointType IN (2, 5) THEN ph.TranPoint ELSE 0 END)) AS RedeemPoint
+                FROM RewardPointHistory ph
+                WHERE ph.TranKey = a.TranKey AND a.MemberID > 0
+                  AND ph.MemberID = a.MemberID
+            ) mpoint
+            OUTER APPLY (
+                SELECT
+                    ISNULL(NULLIF(LTRIM(RTRIM(dp.ReceiptNumber)), ''), CAST(dp.TransactionID AS NVARCHAR(30))) AS DownPaymentNo,
+                    ROUND(ISNULL((
+                        SELECT SUM(ISNULL(p.PayAmount, 0))
+                        FROM DownPayment_PayDetail p
+                        WHERE p.TransactionID = dp.TransactionID AND p.ComputerID = dp.ComputerID
+                    ), 0) / 1.07, 2) AS DownPaymentAmt
+                FROM DownPayment_Transaction dp
+                WHERE ISNULL(a.FromDepositTransactionID, 0) > 0
+                  AND dp.TransactionID = a.FromDepositTransactionID
+                  AND dp.ComputerID = a.FromDepositComputerID
+            ) dep";
 
     /// <summary>POS orderdetail rows that belong on AR/Delivery lines (paid, real product, not void/comment).</summary>
     private const string BillableOrderDetailWhere = @"
@@ -89,6 +128,77 @@ public class PosDataService : IPosDataService
               AND b.ProductID > 0
               AND ISNULL(b.IsComment, 0) = 0
               AND ISNULL(b.VoidStaffID, 0) = 0";
+
+    // DiscPricePercent = item promo %; else amount disc when DiscPercent=0 (bill-share DiscPercent stays head-only).
+    // HasLineDisc → Price before disc, PriceAfVat/GTotal/LineTotal after (WeightPrice). Else case-4: full GTotal, VatSum after.
+    private const string ArInvoiceLineSelect = @"
+                b.TranKey,
+                ISNULL(b.OrderDetailID, 0)                                     AS OrderDetailID,
+                LTRIM(RTRIM(ISNULL(c.ProductCode, CAST(b.ProductID AS NVARCHAR(50))))) AS ItemCode,
+                COALESCE(
+                    NULLIF(NULLIF(LTRIM(RTRIM(pgm.SapItemGroupCode)), ''), '[SAP-PENDING]'),
+                    ISNULL(pg.ProductGroupCode, '')
+                )                                                          AS ItemCategory,
+                ''                                                         AS Dscription,
+                ISNULL(c.ProductName, '')                                  AS Text,
+                ISNULL(b.TotalQty, 0)                                      AS Quantity,
+                ISNULL(c.ProductUnitName, '')                              AS UomCode,
+                ISNULL(b.TotalRetailPrice, 0)                              AS TotalRetailPrice,
+                ISNULL(b.WeightPrice, 0)                                   AS WeightPrice,
+                CASE
+                    WHEN ISNULL(b.DiscPricePercent, 0) > 0 THEN ISNULL(b.DiscPricePercent, 0)
+                    WHEN ISNULL(b.DiscPercent, 0) = 0
+                         AND ISNULL(b.TotalRetailPrice, 0) > 0
+                         AND ISNULL(b.TotalItemDisc, 0) > 0
+                         AND ISNULL(b.WeightPrice, 0) > 0
+                    THEN ROUND(b.TotalItemDisc / b.TotalRetailPrice * 100, 2)
+                    ELSE 0
+                END                                                        AS DiscPrcnt,
+                ROUND(
+                    CASE WHEN ISNULL(b.TotalQty, 0) = 0 THEN 0
+                         ELSE ISNULL(b.TotalRetailPrice, 0) / 1.07 / b.TotalQty
+                    END, 2)                                                AS Price,
+                ROUND(
+                    CASE WHEN ISNULL(b.TotalQty, 0) = 0 THEN 0
+                         WHEN (
+                                ISNULL(b.DiscPricePercent, 0) > 0
+                             OR (ISNULL(b.DiscPercent, 0) = 0
+                                 AND ISNULL(b.TotalItemDisc, 0) > 0
+                                 AND ISNULL(b.WeightPrice, 0) > 0)
+                              )
+                         THEN ISNULL(b.WeightPrice, 0) / b.TotalQty
+                         ELSE ISNULL(b.TotalRetailPrice, 0) / b.TotalQty
+                    END, 2)                                                AS PriceAfVat,
+                ROUND(ISNULL(b.WeightPrice, 0) * 7.0 / 107.0, 2)           AS VatSum,
+                ROUND(
+                    CASE WHEN (
+                                ISNULL(b.DiscPricePercent, 0) > 0
+                             OR (ISNULL(b.DiscPercent, 0) = 0
+                                 AND ISNULL(b.TotalItemDisc, 0) > 0
+                                 AND ISNULL(b.WeightPrice, 0) > 0)
+                              )
+                         THEN ISNULL(b.WeightPrice, 0) / 1.07
+                         ELSE ISNULL(b.TotalRetailPrice, 0) / 1.07
+                    END, 2)                                                AS LineTotal,
+                ROUND(
+                    CASE WHEN (
+                                ISNULL(b.DiscPricePercent, 0) > 0
+                             OR (ISNULL(b.DiscPercent, 0) = 0
+                                 AND ISNULL(b.TotalItemDisc, 0) > 0
+                                 AND ISNULL(b.WeightPrice, 0) > 0)
+                              )
+                         THEN ISNULL(b.WeightPrice, 0)
+                         ELSE ISNULL(b.TotalRetailPrice, 0)
+                    END, 2)                                                AS GTotal,
+                ISNULL(CAST(b.InventoryID AS NVARCHAR(20)), '')            AS WhsCode";
+
+    private const string ArInvoiceLineFrom = @"
+            FROM orderdetail b
+            LEFT JOIN products c ON c.ProductID = b.ProductID
+            LEFT JOIN productdept pd ON pd.ProductDeptID = c.ProductDeptID
+            LEFT JOIN productgroup pg ON pg.ProductGroupID = pd.ProductGroupID AND ISNULL(pg.Deleted, 0) = 0
+            LEFT JOIN productgroup_sap_mapping pgm
+                ON pgm.ProductGroupID = pg.ProductGroupID AND pgm.IsActive = 1";
 
     public Task<List<SapArInvoiceHeadDto>> GetPendingBillsAsync(DateTime dateFrom, DateTime dateTo, int batchSize = 500)
         => GetBillsByFilterAsyncImpl(dateFrom, dateTo, null, batchSize);
@@ -128,61 +238,14 @@ public class PosDataService : IPosDataService
         var heads = (await _db.QueryAsync<dynamic>(headCmd)).ToList();
         if (!heads.Any()) return new();
 
-        var tranKeyCsv = string.Join(",", heads.Select(h => $"'{h.TranKey}'").Distinct());
-        var allLinesSql = $@"
-            SELECT
-                b.TranKey,
-                LTRIM(RTRIM(ISNULL(c.ProductCode, CAST(b.ProductID AS NVARCHAR(50))))) AS ItemCode,
-                COALESCE(
-                    NULLIF(NULLIF(LTRIM(RTRIM(pgm.SapItemGroupCode)), ''), '[SAP-PENDING]'),
-                    ISNULL(pg.ProductGroupCode, '')
-                )                                                          AS ItemCategory,
-                ''                                                         AS Dscription,
-                ISNULL(c.ProductName, '')                                  AS Text,
-                ISNULL(b.TotalQty, 0)                                      AS Quantity,
-                ISNULL(c.ProductUnitName, '')                              AS UomCode,
-                ISNULL(b.DiscPricePercent, 0)                             AS DiscPrcnt,
-                ROUND(
-                    CASE WHEN ISNULL(b.TotalQty, 0) = 0 THEN 0
-                         ELSE (ISNULL(b.WeightPrice, 0) - ISNULL(b.WeightPriceVAT, 0)) / b.TotalQty
-                    END, 2)                                                AS Price,
-                ROUND(
-                    CASE WHEN ISNULL(b.TotalQty, 0) = 0 THEN 0
-                         ELSE ISNULL(b.WeightPrice, 0) / b.TotalQty
-                    END, 2)                                                AS PriceAfVat,
-                ROUND(ISNULL(b.WeightPriceVAT, 0), 2)                      AS VatSum,
-                ROUND(ISNULL(b.WeightPrice, 0) - ISNULL(b.WeightPriceVAT, 0), 2) AS LineTotal,
-                ROUND(ISNULL(b.WeightPrice, 0), 2)                         AS GTotal,
-                ISNULL(CAST(b.InventoryID AS NVARCHAR(20)), '')            AS WhsCode
-            FROM orderdetail b
-            LEFT JOIN products c ON c.ProductID = b.ProductID
-            LEFT JOIN productdept pd ON pd.ProductDeptID = c.ProductDeptID
-            LEFT JOIN productgroup pg ON pg.ProductGroupID = pd.ProductGroupID AND ISNULL(pg.Deleted, 0) = 0
-            LEFT JOIN productgroup_sap_mapping pgm
-                ON pgm.ProductGroupID = pg.ProductGroupID AND pgm.IsActive = 1
-            WHERE b.TranKey IN ({tranKeyCsv})
-              {BillableOrderDetailWhere}
-            ORDER BY b.TranKey, b.DisplayOrdering, b.OrderDetailID";
-
-        var allLines = (await _db.QueryAsync<dynamic>(allLinesSql, commandTimeout: 120)).ToList();
-        var linesByKey = allLines.GroupBy(l => (string)l.TranKey)
-            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+        var tranKeys = heads.Select(h => (string)h.TranKey).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var linesByKey = await LoadArLinesByTranKeyAsync(tranKeys);
+        var synthByKey = await LoadArSynthExtrasAsync(tranKeys);
 
         var results = new List<SapArInvoiceHeadDto>();
         foreach (var h in heads)
         {
-            SapArInvoiceHeadDto headDto = MapHead(h);
-            var lines = linesByKey.GetValueOrDefault((string)h.TranKey) ?? new List<dynamic>();
-            var docNum1 = headDto.DocNum;
-            var whs1 = headDto.BranchCode; // PTTShopCode
-            var dl1 = new List<SapArInvoiceLineDto>(); int li1 = 0;
-            foreach (var l in lines)
-            {
-                if (!IsBillableItemCode(Str(l.ItemCode))) continue;
-                dl1.Add(MapLine(l, docNum1, whs1, li1++));
-            }
-            headDto.DocumentLines = dl1;
-            results.Add(headDto);
+            results.Add(BuildArInvoice(h, linesByKey, synthByKey));
         }
         return results;
     }
@@ -217,75 +280,230 @@ public class PosDataService : IPosDataService
 
         if (!heads.Any()) return new();
 
-        // Batch fetch all lines using the same approach as GetPendingBillsAsync
-        var tranKeyCsv = string.Join(",", heads.Select(h => $"'{h.TranKey}'").Distinct());
+        var tranKeys = heads.Select(h => (string)h.TranKey).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var linesByKey = await LoadArLinesByTranKeyAsync(tranKeys);
+        var synthByKey = await LoadArSynthExtrasAsync(tranKeys);
 
+        var results = new List<SapArInvoiceHeadDto>();
+        foreach (var h in heads)
+        {
+            results.Add(BuildArInvoice(h, linesByKey, synthByKey));
+        }
+
+        return results;
+    }
+
+    private async Task<Dictionary<string, List<dynamic>>> LoadArLinesByTranKeyAsync(List<string> tranKeys)
+    {
+        if (tranKeys.Count == 0)
+            return new Dictionary<string, List<dynamic>>(StringComparer.OrdinalIgnoreCase);
+
+        var tranKeyCsv = string.Join(",", tranKeys.Select(k => $"'{k}'"));
         var allLinesSql = $@"
             SELECT
-                b.TranKey,
-                LTRIM(RTRIM(ISNULL(c.ProductCode, CAST(b.ProductID AS NVARCHAR(50))))) AS ItemCode,
-                COALESCE(
-                    NULLIF(NULLIF(LTRIM(RTRIM(pgm.SapItemGroupCode)), ''), '[SAP-PENDING]'),
-                    ISNULL(pg.ProductGroupCode, '')
-                )                                                          AS ItemCategory,
-                ''                                                         AS Dscription,
-                ISNULL(c.ProductName, '')                                  AS Text,
-                ISNULL(b.TotalQty, 0)                                      AS Quantity,
-                ISNULL(c.ProductUnitName, '')                              AS UomCode,
-                ISNULL(b.DiscPricePercent, 0)                             AS DiscPrcnt,
-                ROUND(
-                    CASE WHEN ISNULL(b.TotalQty, 0) = 0 THEN 0
-                         ELSE (ISNULL(b.WeightPrice, 0) - ISNULL(b.WeightPriceVAT, 0)) / b.TotalQty
-                    END, 2)                                                AS Price,
-                ROUND(
-                    CASE WHEN ISNULL(b.TotalQty, 0) = 0 THEN 0
-                         ELSE ISNULL(b.WeightPrice, 0) / b.TotalQty
-                    END, 2)                                                AS PriceAfVat,
-                ROUND(ISNULL(b.WeightPriceVAT, 0), 2)                      AS VatSum,
-                ROUND(ISNULL(b.WeightPrice, 0) - ISNULL(b.WeightPriceVAT, 0), 2) AS LineTotal,
-                ROUND(ISNULL(b.WeightPrice, 0), 2)                         AS GTotal,
-                ISNULL(CAST(b.InventoryID AS NVARCHAR(20)), '')            AS WhsCode
-            FROM orderdetail b
-            LEFT JOIN products c ON c.ProductID = b.ProductID
-            LEFT JOIN productdept pd ON pd.ProductDeptID = c.ProductDeptID
-            LEFT JOIN productgroup pg ON pg.ProductGroupID = pd.ProductGroupID AND ISNULL(pg.Deleted, 0) = 0
-            LEFT JOIN productgroup_sap_mapping pgm
-                ON pgm.ProductGroupID = pg.ProductGroupID AND pgm.IsActive = 1
+                {ArInvoiceLineSelect}
+            {ArInvoiceLineFrom}
             WHERE b.TranKey IN ({tranKeyCsv})
               {BillableOrderDetailWhere}
             ORDER BY b.TranKey, b.DisplayOrdering, b.OrderDetailID";
 
         var allLines = (await _db.QueryAsync<dynamic>(allLinesSql, commandTimeout: 180)).ToList();
-
-        // Group lines by TranKey
-        var linesByKey = allLines.GroupBy(l => (string)l.TranKey)
+        return allLines.GroupBy(l => (string)l.TranKey)
             .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+    }
 
-        var results = new List<SapArInvoiceHeadDto>();
-        foreach (var h in heads)
+    private async Task<Dictionary<string, ArSynthExtras>> LoadArSynthExtrasAsync(List<string> tranKeys)
+    {
+        var result = new Dictionary<string, ArSynthExtras>(StringComparer.OrdinalIgnoreCase);
+        if (tranKeys.Count == 0) return result;
+
+        foreach (var k in tranKeys)
+            result[k] = new ArSynthExtras();
+
+        var tranKeyCsv = string.Join(",", tranKeys.Select(k => $"'{k}'"));
+
+        // Gift voucher / eVoucher / coupon paytypes → negative AR lines
+        var paySql = $@"
+            SELECT
+                opd.TranKey,
+                opd.PayTypeID,
+                ISNULL(opd.PayAmount, 0) AS PayAmount,
+                ISNULL(NULLIF(LTRIM(RTRIM(opd.VoucherNo)), ''), '') AS VoucherNo
+            FROM orderpaydetail opd
+            WHERE opd.TranKey IN ({tranKeyCsv})
+              AND ISNULL(opd.PayAmount, 0) > 0
+              AND opd.PayTypeID IN (6, 99, 100, 152, 153, 154)";
+        foreach (var row in await _db.QueryAsync<dynamic>(paySql, commandTimeout: 120))
         {
-            SapArInvoiceHeadDto headDto = MapHead(h);
-            var lines = linesByKey.GetValueOrDefault((string)h.TranKey) ?? new List<dynamic>();
-            var docNum2 = headDto.DocNum;
-            var whs2 = headDto.BranchCode; // PTTShopCode
-            var dl2 = new List<SapArInvoiceLineDto>(); int li2 = 0;
-            foreach (var l in lines)
-            {
-                if (!IsBillableItemCode(Str(l.ItemCode))) continue;
-                dl2.Add(MapLine(l, docNum2, whs2, li2++));
-            }
-            headDto.DocumentLines = dl2;
-            results.Add(headDto);
+            var key = (string)row.TranKey;
+            if (!result.TryGetValue(key, out var extras)) continue;
+            var payTypeId = Convert.ToInt32(row.PayTypeID);
+            var amount = Dec(row.PayAmount);
+            var voucherNo = Str(row.VoucherNo);
+            if (payTypeId == 6)
+                extras.Coupons.Add((amount, voucherNo));
+            else
+                extras.GiftVouchers.Add((amount, voucherNo));
         }
 
-        return results;
+        // vsmart coupon/discount codes (when present)
+        var discSql = $@"
+            SELECT
+                d.TranKey,
+                ISNULL(NULLIF(LTRIM(RTRIM(d.CODE)), ''), '') AS Code,
+                ISNULL(d.Price_Used, ISNULL(d.Price, 0)) AS Amount
+            FROM vsmart_orderdiscountdata d
+            WHERE d.TranKey IN ({tranKeyCsv})
+              AND ISNULL(d.Price_Used, ISNULL(d.Price, 0)) > 0";
+        try
+        {
+            foreach (var row in await _db.QueryAsync<dynamic>(discSql, commandTimeout: 120))
+            {
+                var key = (string)row.TranKey;
+                if (!result.TryGetValue(key, out var extras)) continue;
+                extras.Coupons.Add((Dec(row.Amount), Str(row.Code)));
+            }
+        }
+        catch
+        {
+            // ponytail: table may be missing on some HQ DBs — coupon still comes from paytype 6
+        }
+
+        // Promotions: LEFT JOIN so PromotionID=0 (bill-end disc) still loads with null name
+        var promoSql = $@"
+            SELECT
+                opd.TranKey,
+                ISNULL(opd.OrderDetailID, 0) AS OrderDetailID,
+                ISNULL(opd.PromotionID, 0)   AS PromotionID,
+                ISNULL(opd.DiscountPrice, 0) AS DiscountPrice,
+                ISNULL(NULLIF(LTRIM(RTRIM(p.PromotionName)), ''), '') AS PromotionName
+            FROM orderpromotiondetail opd
+            LEFT JOIN promotion p
+                ON p.PromotionID = opd.PromotionID
+               AND ISNULL(p.Deleted, 0) = 0
+            WHERE opd.TranKey IN ({tranKeyCsv})";
+        try
+        {
+            foreach (var row in await _db.QueryAsync<dynamic>(promoSql, commandTimeout: 120))
+            {
+                var key = (string)row.TranKey;
+                if (!result.TryGetValue(key, out var extras)) continue;
+                extras.Promos.Add(new ArPromoRow(
+                    IntZero(row.OrderDetailID),
+                    IntZero(row.PromotionID),
+                    Dec(row.DiscountPrice),
+                    Str(row.PromotionName)));
+            }
+        }
+        catch
+        {
+            // ponytail: older HQ DBs may lack orderpromotiondetail — freebie Text falls back to product name
+        }
+
+        return result;
+    }
+
+    internal static SapArInvoiceHeadDto BuildArInvoice(
+        dynamic h,
+        Dictionary<string, List<dynamic>> linesByKey,
+        Dictionary<string, ArSynthExtras> synthByKey)
+    {
+        var tranKey = (string)h.TranKey;
+        var lines = linesByKey.GetValueOrDefault(tranKey) ?? new List<dynamic>();
+        var extras = synthByKey.GetValueOrDefault(tranKey) ?? new ArSynthExtras();
+
+        // ponytail: POS stores uniform bill promos (e.g. KTC 13%) as DiscPricePercent on every line;
+        // SAP expects head DiscPrcnt only with full-retail lines. Mixed line % stays line-level.
+        TryNormalizeUniformBillPromo(lines, Dec(h.ReceiptDiscount), Dec(h.ReceiptRetailPrice));
+
+        // Dec(dynamic) returns dynamic → force decimal so LINQ Sum binds the decimal overload
+        // (dynamic selectors otherwise resolve to Sum<int> and throw decimal→int at runtime).
+        decimal freeRetail = lines
+            .Where(l => Dec(l.TotalRetailPrice) > 0 && Dec(l.WeightPrice) == 0)
+            .Sum(l => (decimal)Dec(l.TotalRetailPrice));
+
+        // Line-level item discounts must not also appear as head DiscPrcnt
+        decimal lineItemDisc = lines
+            .Where(l => Dec(l.DiscPrcnt) > 0)
+            .Sum(l =>
+            {
+                decimal retailLine = Dec(l.TotalRetailPrice);
+                decimal after = Dec(l.GTotal);
+                // when HasLineDisc, GTotal is WeightPrice (after); discount amt ≈ retail - after
+                return Math.Max(0m, retailLine - after);
+            });
+
+        decimal receiptDiscount = Dec(h.ReceiptDiscount);
+        // DiscPrcnt basis stays VAT-inclusive (ReceiptRetailPrice); TotalAmtBefDis is ex-VAT VATable
+        decimal retail = Dec(h.ReceiptRetailPrice);
+        var billDiscAmt = Math.Max(0m, receiptDiscount - freeRetail - lineItemDisc);
+        var headDiscPrcnt = retail > 0 && billDiscAmt > 0
+            ? Math.Round(billDiscAmt / retail * 100m, 2, MidpointRounding.AwayFromZero)
+            : 0m;
+
+        var voucherTotal = extras.GiftVouchers.Sum(x => x.Amount) + extras.Coupons.Sum(x => x.Amount);
+        var docTotal = Math.Max(0m, (decimal)Dec(h.DocTotal) - voucherTotal);
+
+        var headDto = MapHead(h, headDiscPrcnt, docTotal);
+        var docNum = headDto.DocNum;
+        var whs = headDto.BranchCode;
+        var dl = new List<SapArInvoiceLineDto>();
+        foreach (var l in lines)
+        {
+            if (!IsBillableItemCode(Str(l.ItemCode))) continue;
+            dl.Add(MapLine(l, docNum, whs, dl.Count));
+        }
+
+        AddServiceChargeLine(dl, h, docNum, whs);
+        AddFreebieOrRedeemLines(dl, lines, headDto.CustRedeemPoing, docNum, whs, extras.Promos);
+        AddNegativePayLines(dl, extras.Coupons, gbVar.SapArItemCoupon, gbVar.SapArCatCoupon, "ส่วนลดโปรโมชั่น", docNum, whs);
+        AddNegativePayLines(dl, extras.GiftVouchers, gbVar.SapArItemGiftVoucher, gbVar.SapArCatGiftVoucher, "Gift voucher", docNum, whs);
+
+        // Enrich Comments with voucher/coupon codes when head note empty or append codes
+        var codes = extras.Coupons.Select(c => c.VoucherNo)
+            .Concat(extras.GiftVouchers.Select(c => c.VoucherNo))
+            .Where(c => !string.IsNullOrWhiteSpace(c))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (codes.Count > 0)
+        {
+            var note = headDto.Comments?.Trim() ?? string.Empty;
+            var codeText = string.Join(" ", codes);
+            headDto.Comments = string.IsNullOrEmpty(note) ? codeText : $"{note} {codeText}".Trim();
+        }
+
+        headDto.DocumentLines = dl;
+        return headDto;
+    }
+
+    internal sealed class ArPromoRow
+    {
+        public ArPromoRow(int orderDetailId, int promotionId, decimal discountPrice, string promotionName)
+        {
+            OrderDetailId = orderDetailId;
+            PromotionId = promotionId;
+            DiscountPrice = discountPrice;
+            PromotionName = promotionName ?? string.Empty;
+        }
+
+        public int OrderDetailId { get; }
+        public int PromotionId { get; }
+        public decimal DiscountPrice { get; }
+        public string PromotionName { get; }
+    }
+
+    internal sealed class ArSynthExtras
+    {
+        public List<(decimal Amount, string VoucherNo)> Coupons { get; } = new();
+        public List<(decimal Amount, string VoucherNo)> GiftVouchers { get; } = new();
+        public List<ArPromoRow> Promos { get; } = new();
     }
 
     private const string IncomingPaymentHeadJoins = @"
             LEFT JOIN shop_data s  ON s.ShopID = a.ShopID
             LEFT JOIN salemode sm  ON sm.SaleModeID = TRY_CAST(a.SaleMode AS INT)";
 
-    /// CardCode=SLOC, BranchCode=PTTShopCode, BranchName/CardName=ShopName.
+    /// CardCode=SLOC, BranchCode=PTTShopCode, BranchName/CardName=ShopName, VatBranch=BranchNo.
     private const string IncomingPaymentHeadSelect = @"
                     a.ReceiptNumber                                              AS PosDocNo,
                     CONVERT(varchar(10), a.SaleDate, 23)                        AS DocDate,
@@ -296,6 +514,7 @@ public class PosDataService : IPosDataService
                     CAST(a.ComputerID AS NVARCHAR(20))                          AS PosId,
                     ISNULL(NULLIF(s.PTTShopCode, ''), s.shopcode)               AS BranchCode,
                     ISNULL(s.shopname, '')                                      AS BranchName,
+                    ISNULL(s.BranchNo, '')                                      AS VatBranch,
                     ISNULL(sm.SaleModeName, CAST(a.SaleMode AS NVARCHAR(20)))   AS Channel,
                     ISNULL(a.TransactionNote, '')                               AS Comments,
                     ISNULL(a.ReceiptPayPrice, 0)                                AS DocTotal,
@@ -568,6 +787,7 @@ public class PosDataService : IPosDataService
             DocCur     = gbVar.SapDocCur,
             BranchCode = Str(h.BranchCode),
             BranchName = Str(h.BranchName),
+            VatBranch  = Str(h.VatBranch),
             Channel    = Str(h.Channel),
             Comments   = Str(h.Comments),
 
@@ -590,10 +810,10 @@ public class PosDataService : IPosDataService
                     DocNum         = docNum,
                     LineNum        = i,
                     CreditCard     = Str(p.SapPayTypeName),
-                    CreditAcct     = Str(p.SapGlAccount),
+                    CreditAcct     = string.Empty,
                     CrCardNum      = Str(p.CreditCardNo),
                     CardValid      = FormatCardExpiry(Convert.ToInt32(p.ExpireMonth), Convert.ToInt32(p.ExpireYear)),
-                    CreditCardBank = string.Empty,
+                    CreditCardBank = "BAY",
                     CreditSum      = Dec(p.PayAmount),
                     VoucherNum     = !string.IsNullOrEmpty((string)p.CCApproveCode)
                         ? (string)p.CCApproveCode
@@ -691,20 +911,68 @@ public class PosDataService : IPosDataService
 
     // ------------------------------------------------------------------ Mappers
 
-    private static string Str(object? val) => val?.ToString() ?? string.Empty;
-    private static decimal Dec(object? val) => val == null || val is DBNull ? 0m : Convert.ToDecimal(val);
+    internal static string Str(object? val) => val?.ToString() ?? string.Empty;
+    /// <summary>
+    /// Uniform bill promo: every discounted line shares the same DiscPrcnt and sums to ReceiptDiscount.
+    /// SAP wants head DiscPrcnt only; reset lines to full retail before head/line split.
+    /// </summary>
+    internal static bool TryNormalizeUniformBillPromo(
+        List<dynamic> lines,
+        decimal receiptDiscount,
+        decimal receiptRetail)
+    {
+        if (receiptDiscount <= 0 || receiptRetail <= 0)
+            return false;
+
+        var billable = lines.Where(l => IsBillableItemCode(Str(l.ItemCode))).ToList();
+        var billableWithRetail = billable.Where(l => Dec(l.TotalRetailPrice) > 0).ToList();
+        if (billableWithRetail.Count < 2)
+            return false;
+
+        var promoPrcnt = Dec(billableWithRetail[0].DiscPrcnt);
+        if (promoPrcnt <= 0 || billableWithRetail.Any(l => Dec(l.DiscPrcnt) != promoPrcnt))
+            return false;
+
+        var itemDiscTotal = billable.Sum(l =>
+            (decimal)Math.Max(0m, Dec(l.TotalRetailPrice) - Dec(l.GTotal)));
+        if (Math.Abs(itemDiscTotal - receiptDiscount) > 0.05m)
+            return false;
+
+        var headPrcnt = Math.Round(receiptDiscount / receiptRetail * 100m, 2, MidpointRounding.AwayFromZero);
+        if (Math.Abs(promoPrcnt - headPrcnt) > 0.05m)
+            return false;
+
+        foreach (var l in billable)
+            ResetLineToFullRetail(l);
+
+        return true;
+    }
+
+    internal static void ResetLineToFullRetail(dynamic l)
+    {
+        var qty = Dec(l.Quantity);
+        var retail = Dec(l.TotalRetailPrice);
+        l.DiscPrcnt = 0m;
+        l.GTotal = retail;
+        l.LineTotal = Math.Round(retail / 1.07m, 2, MidpointRounding.AwayFromZero);
+        l.PriceAfVat = qty == 0 ? 0m : Math.Round(retail / qty, 2, MidpointRounding.AwayFromZero);
+        l.Price = qty == 0 ? 0m : Math.Round(retail / 1.07m / qty, 2, MidpointRounding.AwayFromZero);
+        l.VatSum = Math.Round(retail * 7m / 107m, 2, MidpointRounding.AwayFromZero);
+    }
+
+    internal static decimal Dec(object? val) => val == null || val is DBNull ? 0m : Convert.ToDecimal(val);
     private static decimal? DecNull(object? val) => val == null || val is DBNull ? null : Convert.ToDecimal(val);
 
-    private static bool IsBillableItemCode(string? itemCode)
+    internal static bool IsBillableItemCode(string? itemCode)
     {
         var code = (itemCode ?? string.Empty).Trim();
         return code.Length > 0 && code != "0";
     }
 
     private static int? IntNull(object? val) => val == null || val is DBNull ? null : Convert.ToInt32(Convert.ToDecimal(val));
-    private static int IntZero(object? val) => val == null || val is DBNull ? 0 : Convert.ToInt32(Convert.ToDecimal(val));
+    internal static int IntZero(object? val) => val == null || val is DBNull ? 0 : Convert.ToInt32(Convert.ToDecimal(val));
 
-    private static SapArInvoiceHeadDto MapHead(dynamic h)
+    internal static SapArInvoiceHeadDto MapHead(dynamic h, decimal? discPrcntOverride = null, decimal? docTotalOverride = null)
     {
         string docDate;
         if (h.DocDate is DateTime dt)
@@ -738,15 +1006,15 @@ public class PosDataService : IPosDataService
             CustRedeemPoing  = IntZero(h.CustRedeemPoing),
             CustBalancePoint = IntZero(h.CustBalancePoint),
             TotalAmtBefDis   = Dec(h.TotalAmtBefDis),
-            DiscPrcnt        = Dec(h.DiscPrcnt),
+            DiscPrcnt        = discPrcntOverride ?? Dec(h.DiscPrcnt),
             DownPaymentNo    = Str(h.DownPaymentNo),
             DownPaymentAmt   = Dec(h.DownPaymentAmt),
-            DocTotal         = Dec(h.DocTotal),
+            DocTotal         = docTotalOverride ?? Dec(h.DocTotal),
             DocumentLines    = new()
         };
     }
 
-    private static SapArInvoiceLineDto MapLine(dynamic l, string docNum, string whsCode, int idx)
+    internal static SapArInvoiceLineDto MapLine(dynamic l, string docNum, string whsCode, int idx)
     {
         return new SapArInvoiceLineDto
         {
@@ -761,11 +1029,158 @@ public class PosDataService : IPosDataService
             DiscPrcnt    = Dec(l.DiscPrcnt),
             Price        = Dec(l.Price),
             PriceAfVat   = Dec(l.PriceAfVat),
-            VatPrcnt     = 7m,
-            VatGroup     = "S07",
+            VatPrcnt     = gbVar.SapVatPrcnt,
+            VatGroup     = gbVar.SapVatGroup,
             VatSum       = Dec(l.VatSum),
             LineTotal    = Dec(l.LineTotal),
             GTotal       = Dec(l.GTotal),
+            WhsCode      = whsCode,
+            CouponNo     = new List<object>()
+        };
+    }
+
+    internal static void AddServiceChargeLine(
+        List<SapArInvoiceLineDto> lines,
+        dynamic head,
+        string docNum,
+        string whsCode)
+    {
+        var total = Dec(head.ServiceCharge);
+        if (total <= 0) return;
+
+        lines.Add(new SapArInvoiceLineDto
+        {
+            DocNum       = docNum,
+            LineNum      = lines.Count,
+            ItemCode     = gbVar.SapArItemServiceCharge,
+            ItemCategory = gbVar.SapArCatServiceCharge,
+            Dscription   = string.Empty,
+            Text         = "Service Charge",
+            Quantity     = 1,
+            UomCode      = string.Empty,
+            DiscPrcnt    = 0,
+            Price        = Dec(head.ServiceChargeBeforeVat),
+            PriceAfVat   = total,
+            VatPrcnt     = gbVar.SapVatPrcnt,
+            VatGroup     = gbVar.SapVatGroup,
+            VatSum       = Dec(head.ServiceChargeVat),
+            LineTotal    = Dec(head.ServiceChargeBeforeVat),
+            GTotal       = total,
+            WhsCode      = whsCode,
+            CouponNo     = new List<object>()
+        });
+    }
+
+    /// <summary>
+    /// Free items (WeightPrice=0, TotalRetailPrice&gt;0) → negative OP line (or RV-RD when bill redeemed points).
+    /// Product line stays at full retail; this line offsets the free value.
+    /// PromotionID=0 on orderpromotiondetail = bill-end discount (not used for OP Text).
+    /// </summary>
+    internal static void AddFreebieOrRedeemLines(
+        List<SapArInvoiceLineDto> lines,
+        List<dynamic> rawLines,
+        int redeemPoints,
+        string docNum,
+        string whsCode,
+        IReadOnlyList<ArPromoRow>? promos = null)
+    {
+        var freeLines = rawLines
+            .Where(l => Dec(l.TotalRetailPrice) > 0 && Dec(l.WeightPrice) == 0 && IsBillableItemCode(Str(l.ItemCode)))
+            .ToList();
+        if (freeLines.Count == 0) return;
+
+        var useRedeem = redeemPoints > 0;
+        var itemCode = useRedeem ? gbVar.SapArItemRedeem : gbVar.SapArItemFreebie;
+        var itemCat = useRedeem ? gbVar.SapArCatRedeem : gbVar.SapArCatFreebie;
+        var promoList = promos ?? Array.Empty<ArPromoRow>();
+
+        foreach (var fl in freeLines)
+        {
+            var gross = Dec(fl.TotalRetailPrice);
+            var exVat = Math.Round(gross / 1.07m, 2, MidpointRounding.AwayFromZero);
+            var vat = Math.Round(gross * 7m / 107m, 2, MidpointRounding.AwayFromZero);
+            var text = useRedeem
+                ? $"แลก {redeemPoints} คะแนน"
+                : ResolveFreebiePromoText(fl, promoList);
+
+            lines.Add(MakeNegativeLine(lines.Count, docNum, whsCode, itemCode, itemCat, text, exVat, gross, vat));
+        }
+    }
+
+    /// <summary>
+    /// Name for OP freebie Text: PromotionID&gt;0 only. Match OrderDetailID, else bill-level (0) by DiscountPrice.
+    /// </summary>
+    internal static string ResolveFreebiePromoText(dynamic fl, IReadOnlyList<ArPromoRow> promos)
+    {
+        var named = promos
+            .Where(p => p.PromotionId > 0 && !string.IsNullOrWhiteSpace(p.PromotionName))
+            .ToList();
+
+        var orderDetailId = IntZero(fl.OrderDetailID);
+        var byDetail = named.FirstOrDefault(p => p.OrderDetailId == orderDetailId);
+        if (byDetail != null)
+            return byDetail.PromotionName;
+
+        var gross = Dec(fl.TotalRetailPrice);
+        var byAmt = named.FirstOrDefault(p =>
+            p.OrderDetailId == 0 && Math.Abs(p.DiscountPrice - gross) <= 0.05m);
+        if (byAmt != null)
+            return byAmt.PromotionName;
+
+        return string.IsNullOrWhiteSpace(Str(fl.Text)) ? "ของแถมพร้อมการขาย" : Str(fl.Text);
+    }
+
+    internal static void AddNegativePayLines(
+        List<SapArInvoiceLineDto> lines,
+        List<(decimal Amount, string VoucherNo)> pays,
+        string itemCode,
+        string itemCategory,
+        string defaultText,
+        string docNum,
+        string whsCode)
+    {
+        foreach (var pay in pays)
+        {
+            if (pay.Amount <= 0) continue;
+            var gross = pay.Amount;
+            var exVat = Math.Round(gross / 1.07m, 2, MidpointRounding.AwayFromZero);
+            var vat = Math.Round(gross * 7m / 107m, 2, MidpointRounding.AwayFromZero);
+            var text = string.IsNullOrWhiteSpace(pay.VoucherNo)
+                ? defaultText
+                : $"{defaultText} {pay.VoucherNo}".Trim();
+            lines.Add(MakeNegativeLine(lines.Count, docNum, whsCode, itemCode, itemCategory, text, exVat, gross, vat));
+        }
+    }
+
+    internal static SapArInvoiceLineDto MakeNegativeLine(
+        int lineNum,
+        string docNum,
+        string whsCode,
+        string itemCode,
+        string itemCategory,
+        string text,
+        decimal exVat,
+        decimal grossVatInc,
+        decimal vat)
+    {
+        return new SapArInvoiceLineDto
+        {
+            DocNum       = docNum,
+            LineNum      = lineNum,
+            ItemCode     = itemCode,
+            ItemCategory = itemCategory,
+            Dscription   = string.Empty,
+            Text         = text,
+            Quantity     = -1,
+            UomCode      = string.Empty,
+            DiscPrcnt    = 0,
+            Price        = exVat,
+            PriceAfVat   = grossVatInc,
+            VatPrcnt     = gbVar.SapVatPrcnt,
+            VatGroup     = gbVar.SapVatGroup,
+            VatSum       = -vat,
+            LineTotal    = -exVat,
+            GTotal       = -grossVatInc,
             WhsCode      = whsCode,
             CouponNo     = new List<object>()
         };

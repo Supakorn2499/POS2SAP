@@ -127,7 +127,7 @@ public class SapArInvoiceService : ISapArInvoiceService
         }
     }
 
-    private static (bool IsSuccess, string? SapDocNum, string? ErrMsg) ParseSapResponseBody(string raw)
+    internal static (bool IsSuccess, string? SapDocNum, string? ErrMsg) ParseSapResponseBody(string raw)
     {
         try
         {

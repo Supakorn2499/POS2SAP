@@ -1,7 +1,7 @@
 // src/pages/MonitorDetailPage.tsx
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, RefreshCw, CheckCircle, Clock, Activity, XCircle, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import monitorService from '@/services/monitorService';
@@ -27,6 +27,7 @@ export default function MonitorDetailPage() {
   const { t } = useLanguage();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [tab, setTab] = useState<Tab>('request');
   const [retrying, setRetrying] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -62,6 +63,9 @@ export default function MonitorDetailPage() {
     setDeleting(true);
     try {
       await monitorService.deleteLog(id);
+      // List page caches for 30s — drop it so back-nav doesn't show the deleted row
+      await queryClient.invalidateQueries({ queryKey: ['monitor-logs'] });
+      await queryClient.removeQueries({ queryKey: ['monitor-detail', id] });
       toast.success(t('deleteLogSuccess'));
       navigate('/monitor');
     } catch (err: unknown) {

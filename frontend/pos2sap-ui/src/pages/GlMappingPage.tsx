@@ -63,6 +63,15 @@ function isPendingGl(edit: UpsertGlMappingDto): boolean {
   return !gl || gl === '[GL-PENDING]';
 }
 
+/** SAP OCRC CreditCard codes are short codes, not display names. */
+const SAP_CREDIT_CARD_CODE_RE = /^[0-9A-Za-z._-]{1,20}$/;
+
+function isValidSapCreditCardCode(value: string): boolean {
+  const v = value.trim();
+  if (!v || v === '[OCRC-PENDING]') return false;
+  return SAP_CREDIT_CARD_CODE_RE.test(v);
+}
+
 function snapshotRow(row: PaytypeGlMappingDto): UpsertGlMappingDto {
   return {
     payTypeID: row.payTypeID,
@@ -186,8 +195,11 @@ export default function GlMappingPage() {
     if (edit.sapPayCategory !== 'SKIP') {
       const gl = edit.sapGlAccount?.trim() ?? '';
       if (!gl || gl === '[GL-PENDING]') return t('glMappingValidationGlAccount');
-      if (edit.sapPayCategory === 'CREDIT_CARD' && !edit.sapPayTypeName?.trim())
-        return t('glMappingValidationSapPayType');
+      if (edit.sapPayCategory === 'CREDIT_CARD') {
+        const code = edit.sapPayTypeName?.trim() ?? '';
+        if (!code) return t('glMappingValidationSapPayType');
+        if (!isValidSapCreditCardCode(code)) return t('glMappingValidationSapPayTypeFormat');
+      }
     }
     return null;
   }
@@ -310,6 +322,7 @@ export default function GlMappingPage() {
     let ok = 0;
     let skip = 0;
     let fail = 0;
+    let lastFailMsg = '';
 
     for (const raw of csvRows) {
       const payTypeID = csvInt(csvCell(raw, 'PayTypeID', 'payTypeID', 'paytypeid'));
@@ -331,37 +344,51 @@ export default function GlMappingPage() {
         ?? unmappedHit?.payTypeName
         ?? `PayType ${payTypeID}`;
 
+      // Always take SapPayTypeName from CSV (including empty → null clears DB)
+      const sapPayTypeNameRaw = csvCell(raw, 'SapPayTypeName', 'sapPayTypeName', 'SAPPayTypeName');
+      const sapPayTypeName = sapPayTypeNameRaw.trim() === '' ? null : sapPayTypeNameRaw.trim();
+
       const payload: UpsertGlMappingDto = {
         payTypeID,
         payTypeName,
         sapPayCategory,
         sapGlAccount: csvNullable(csvCell(raw, 'SapGlAccount', 'sapGlAccount')),
-        sapPayTypeName: csvNullable(csvCell(raw, 'SapPayTypeName', 'sapPayTypeName')),
+        sapPayTypeName,
         isActive: csvBool(csvCell(raw, 'IsActive', 'isActive'), existing?.isActive ?? true),
         sortOrder: csvInt(csvCell(raw, 'SortOrder', 'sortOrder'), existing?.sortOrder ?? 99),
         remarks: csvNullable(csvCell(raw, 'Remarks', 'remarks')),
       };
 
       try {
-        await glMappingService.upsert(payload);
+        const saved = await glMappingService.upsert(payload);
+        if (!saved) {
+          fail++;
+          lastFailMsg = `PayTypeID ${payTypeID}`;
+          continue;
+        }
         ok++;
-      } catch {
+      } catch (err: unknown) {
         fail++;
+        lastFailMsg = err instanceof Error ? err.message : `PayTypeID ${payTypeID}`;
       }
     }
 
-    await Promise.all([
-      qc.invalidateQueries({ queryKey: ['glmapping'] }),
-      qc.invalidateQueries({ queryKey: ['glmapping-unmapped'] }),
-    ]);
     setEdits({});
+    await Promise.all([
+      qc.refetchQueries({ queryKey: ['glmapping'] }),
+      qc.refetchQueries({ queryKey: ['glmapping-unmapped'] }),
+    ]);
 
     if (ok === 0 && fail === 0) {
       toast.error(t('importMappingInvalid'));
       return;
     }
     if (fail > 0 || skip > 0) {
-      toast.error(t('importMappingPartial', { ok, skip, fail }));
+      toast.error(
+        lastFailMsg
+          ? `${t('importMappingPartial', { ok, skip, fail })} — ${lastFailMsg}`
+          : t('importMappingPartial', { ok, skip, fail })
+      );
     } else {
       toast.success(t('importMappingSuccess', { count: ok }));
     }
@@ -397,6 +424,11 @@ export default function GlMappingPage() {
           <span>{t('glMappingPendingGlHint')}</span>
         </div>
       )}
+
+      <div className="flex items-start gap-2 rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900 dark:border-sky-500/40 dark:bg-sky-950/40 dark:text-sky-100">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+        <span>{t('glMappingCreditCardHint')}</span>
+      </div>
 
       <div className="flex flex-wrap gap-2 text-sm">
         {CATEGORIES.map((c) => (
@@ -517,7 +549,7 @@ export default function GlMappingPage() {
                         value={e.sapPayTypeName ?? ''}
                         onChange={(ev) => setField(row.payTypeID, 'sapPayTypeName', ev.target.value || null)}
                         placeholder={e.sapPayCategory === 'CREDIT_CARD' ? t('glMappingSapPayTypePlaceholder') : '—'}
-                        disabled={e.sapPayCategory === 'SKIP' || e.sapPayCategory !== 'CREDIT_CARD'}
+                        disabled={e.sapPayCategory === 'SKIP'}
                         className={mappingInputClass}
                       />
                     </td>

@@ -126,7 +126,7 @@ builder.Services.AddInMemoryRateLimiting();
 builder.Services.AddCors(options =>
 {
     var allowedOrigins = builder.Configuration.GetSection("AllowedOrigins").Get<string[]>()
-        ?? new[] { "http://localhost:5173", "http://localhost:3000" };
+        ?? new[] { "http://localhost:5273", "http://localhost:5173", "http://localhost:3000" };
 
     options.AddPolicy("AllowFrontend", policy =>
     {
