@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { decodeCsvBytes, parseCsv } from '@/lib/parseCsv';
+import { AppIcon } from '@/components/ui/AppIcon';
 
 type Props = {
   onExport: () => void;
@@ -77,18 +78,18 @@ export function MappingExcelActions({
           type="button"
           onClick={onExport}
           disabled={disabled || exportDisabled}
-          className="inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-2 text-sm font-medium hover:bg-muted disabled:opacity-40"
+          className="inline-flex items-center gap-1.5 rounded-xl border border-input bg-background px-3 py-2 text-sm font-medium shadow-sm transition hover:bg-muted disabled:opacity-40"
         >
-          <Download className="h-4 w-4" />
+          <AppIcon icon={Download} className="h-4 w-4" />
           {t('exportToExcel')}
         </button>
         <button
           type="button"
           onClick={() => inputRef.current?.click()}
           disabled={disabled || importing || pending != null}
-          className="inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-2 text-sm font-medium hover:bg-muted disabled:opacity-40"
+          className="inline-flex items-center gap-1.5 rounded-xl border border-input bg-background px-3 py-2 text-sm font-medium shadow-sm transition hover:bg-muted disabled:opacity-40"
         >
-          <Upload className="h-4 w-4" />
+          <AppIcon icon={Upload} className="h-4 w-4" />
           {importing ? t('importing') : t('importFromExcel')}
         </button>
         <input

@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import {
   Search, Upload, ArrowRight, CheckCircle2,
-  CheckSquare2, Square, MinusSquare, Loader2,
+  CheckSquare2, Square, MinusSquare, Loader2, FileInput,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import interfaceService from '@/services/interfaceService';
@@ -13,15 +13,18 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { fmtDate, fmt, todayStr, cn } from '@/lib/utils';
 import { DateInputDdMmYyyy } from '@/components/DateInputDdMmYyyy';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { AppIcon } from '@/components/ui/AppIcon';
+import { AppSelect } from '@/components/ui/AppSelect';
+import { PageHeader } from '@/components/PageHeader';
 import type { ImportPreviewItem } from '@/types/import';
 
 const INTERFACE_OPTIONS = [
-  { value: 'ARInvoice',       label: 'AR Invoice' },
-  { value: 'IncomingPayment', label: 'Incoming Payment' },
-  { value: 'Delivery',        label: 'Delivery' },
-];
+  { value: 'ARInvoice', labelKey: 'interfaceTypeAR' },
+  { value: 'IncomingPayment', labelKey: 'interfaceTypeAP' },
+  { value: 'Delivery', labelKey: 'interfaceTypeDL' },
+] as const;
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 10;
 
 export default function ImportPage() {
   const { t } = useLanguage();
@@ -142,7 +145,7 @@ export default function ImportPage() {
   const LoadingOverlay = ({ message }: { message: string }) => (
     <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/40 backdrop-blur-sm">
       <div className="rounded-2xl bg-white shadow-2xl px-10 py-8 flex flex-col items-center gap-4 max-w-xs w-full mx-4">
-        <Loader2 className="h-10 w-10 text-primary animate-spin" />
+        <AppIcon icon={Loader2} className="h-10 w-10 text-primary animate-spin" />
         <p className="text-sm font-medium text-center text-foreground">{message}</p>
       </div>
     </div>
@@ -167,34 +170,31 @@ export default function ImportPage() {
         onCancel={() => setConfirmOpen(false)}
       />
 
-      {/* Header */}
-      <div>
-        <h1 className="text-xl font-bold">{t('importPageTitle')}</h1>
-        <p className="text-sm text-muted-foreground">{t('importPageSubtitle')}</p>
-      </div>
+      <PageHeader
+        icon={FileInput}
+        title={t('importPageTitle')}
+        subtitle={t('importPageSubtitle')}
+      />
 
       {/* ── STEP 1: Filter ── */}
-      <div className="rounded-xl border bg-card p-5 shadow-sm space-y-4">
-        <h2 className="font-semibold text-sm">{t('importStepFilter')}</h2>
-        <div className="flex flex-wrap gap-3 items-end">
-          {/* Interface Type */}
-          <div className="flex flex-col gap-1">
-            <label className="text-xs text-muted-foreground">{t('importDocType')}</label>
-            <select
+      <div className="space-y-4 rounded-2xl border bg-card p-4 shadow-sm md:p-5">
+        <h2 className="text-sm font-semibold tracking-tight">{t('importStepFilter')}</h2>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5 xl:items-end">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-muted-foreground">{t('importDocType')}</label>
+            <AppSelect
               value={interfaceType}
-              onChange={e => setInterfaceType(e.target.value)}
+              onChange={(e) => setInterfaceType(e.target.value)}
               disabled={isLoading}
-              className="rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
             >
-              {INTERFACE_OPTIONS.map(o => (
-                <option key={o.value} value={o.value}>{o.label}</option>
+              {INTERFACE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{t(o.labelKey)}</option>
               ))}
-            </select>
+            </AppSelect>
           </div>
 
-          {/* Date From */}
-          <div className="flex flex-col gap-1">
-            <label className="text-xs text-muted-foreground">{t('importDateFrom')}</label>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-muted-foreground">{t('importDateFrom')}</label>
             <DateInputDdMmYyyy
               value={dateFrom}
               onChange={setDateFrom}
@@ -202,9 +202,8 @@ export default function ImportPage() {
             />
           </div>
 
-          {/* Date To */}
-          <div className="flex flex-col gap-1">
-            <label className="text-xs text-muted-foreground">{t('importDateTo')}</label>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-muted-foreground">{t('importDateTo')}</label>
             <DateInputDdMmYyyy
               value={dateTo}
               min={dateFrom}
@@ -213,33 +212,31 @@ export default function ImportPage() {
             />
           </div>
 
-          {/* Branch */}
-          <div className="flex flex-col gap-1">
-            <label className="text-xs text-muted-foreground">{t('branchLabel')}</label>
-            <select
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-muted-foreground">{t('branchLabel')}</label>
+            <AppSelect
               value={branchCode}
-              onChange={e => setBranchCode(e.target.value)}
+              onChange={(e) => setBranchCode(e.target.value)}
               disabled={isLoading}
-              className="rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring min-w-40 disabled:opacity-50"
             >
               <option value="">{t('allBranches')}</option>
-              {branchOptions.map(b => (
+              {branchOptions.map((b) => (
                 <option key={b.branchCode} value={b.branchCode}>
                   {b.branchName || b.branchCode}
                 </option>
               ))}
-            </select>
+            </AppSelect>
           </div>
 
-          {/* Preview Button */}
           <button
+            type="button"
             onClick={() => previewMutation.mutate()}
             disabled={isLoading || !dateFrom || !dateTo}
-            className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 self-end"
+            className="app-btn-primary w-full sm:col-span-2 xl:col-span-1"
           >
             {previewMutation.isPending
-              ? <Loader2 className="h-4 w-4 animate-spin" />
-              : <Search className="h-4 w-4" />}
+              ? <AppIcon icon={Loader2} className="h-4 w-4 animate-spin" />
+              : <AppIcon icon={Search} className="h-4 w-4" />}
             {previewMutation.isPending ? t('importPreviewing') : t('importPreviewBtn')}
           </button>
         </div>
@@ -269,7 +266,7 @@ export default function ImportPage() {
                 disabled={isLoading || newItems.length === 0}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-primary bg-primary/5 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/10 disabled:opacity-40 transition-colors"
               >
-                <CheckSquare2 className="h-3.5 w-3.5" />
+                <AppIcon icon={CheckSquare2} className="h-3.5 w-3.5" />
                 {t('importSelectAll')}
               </button>
               <button
@@ -277,7 +274,7 @@ export default function ImportPage() {
                 disabled={isLoading || selected.size === 0}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40 transition-colors"
               >
-                <MinusSquare className="h-3.5 w-3.5" />
+                <AppIcon icon={MinusSquare} className="h-3.5 w-3.5" />
                 {t('importDeselectAll')}
               </button>
             </div>
@@ -296,10 +293,10 @@ export default function ImportPage() {
                       className="flex items-center justify-center disabled:opacity-30"
                     >
                       {somePageChecked
-                        ? <MinusSquare className="h-4 w-4 text-primary" />
+                        ? <AppIcon icon={MinusSquare} className="h-4 w-4 text-primary" />
                         : allPageNewChecked
-                          ? <CheckSquare2 className="h-4 w-4 text-primary" />
-                          : <Square className="h-4 w-4" />}
+                          ? <AppIcon icon={CheckSquare2} className="h-4 w-4 text-primary" />
+                          : <AppIcon icon={Square} className="h-4 w-4" />}
                     </button>
                   </th>
                   <th className="px-4 py-2.5">{t('posDocNo')}</th>
@@ -329,11 +326,11 @@ export default function ImportPage() {
                     >
                       <td className="px-4 py-2">
                         {item.alreadyImported ? (
-                          <Square className="h-4 w-4 text-muted-foreground/30" />
+                          <AppIcon icon={Square} className="h-4 w-4 text-muted-foreground/30" />
                         ) : isChecked ? (
-                          <CheckSquare2 className="h-4 w-4 text-primary" />
+                          <AppIcon icon={CheckSquare2} className="h-4 w-4 text-primary" />
                         ) : (
-                          <Square className="h-4 w-4 text-muted-foreground" />
+                          <AppIcon icon={Square} className="h-4 w-4 text-muted-foreground" />
                         )}
                       </td>
                       <td className="px-4 py-2 font-mono text-xs">{item.docNum}</td>
@@ -395,7 +392,7 @@ export default function ImportPage() {
               disabled={selected.size === 0 || isLoading}
               className="flex items-center gap-2 rounded-lg bg-green-600 px-5 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50 transition-colors"
             >
-              <Upload className="h-4 w-4" />
+              <AppIcon icon={Upload} className="h-4 w-4" />
               {t('importConfirmBtn', { count: selected.size })}
             </button>
           </div>
@@ -412,7 +409,7 @@ export default function ImportPage() {
       {/* ── STEP 3: Result ── */}
       {importResult !== null && (
         <div className="rounded-xl border bg-card p-8 shadow-sm text-center space-y-4">
-          <CheckCircle2 className="h-12 w-12 text-green-500 mx-auto" />
+          <AppIcon icon={CheckCircle2} className="h-12 w-12 text-green-500 mx-auto" />
           <h2 className="text-lg font-bold">{t('importDone')}</h2>
           <p className="text-sm text-muted-foreground">
             {t('importDoneDetail', { imported: importResult.imported })}
@@ -428,7 +425,7 @@ export default function ImportPage() {
               onClick={() => navigate('/monitor')}
               className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
             >
-              {t('goToMonitor')} <ArrowRight className="h-4 w-4" />
+              {t('goToMonitor')} <AppIcon icon={ArrowRight} className="h-4 w-4" />
             </button>
           </div>
         </div>

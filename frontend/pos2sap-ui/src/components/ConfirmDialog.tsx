@@ -1,6 +1,8 @@
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { AlertCircle, Check, X } from 'lucide-react';
+import { AppIcon } from '@/components/ui/AppIcon';
+import { cn } from '@/lib/utils';
 
 interface ConfirmDialogProps {
   isOpen: boolean;
@@ -18,8 +20,8 @@ export function ConfirmDialog({
   isOpen,
   title,
   message,
-  confirmText = 'ยืนยัน',
-  cancelText = 'ยกเลิก',
+  confirmText = 'Confirm',
+  cancelText = 'Cancel',
   isDangerous = false,
   isLoading = false,
   onConfirm,
@@ -50,29 +52,34 @@ export function ConfirmDialog({
       />
 
       <div
-        className="relative z-10 w-full max-w-md overflow-hidden rounded-xl bg-white shadow-2xl"
+        className="relative z-10 w-full max-w-md overflow-hidden rounded-2xl border border-border/80 bg-card shadow-2xl shadow-black/10"
         onClick={(e) => e.stopPropagation()}
       >
         <div
-          className={`flex items-start gap-4 p-6 ${
-            isDangerous ? 'bg-red-50' : 'bg-blue-50'
-          }`}
+          className={cn(
+            'flex items-start gap-4 p-6',
+            isDangerous ? 'bg-rose-50 dark:bg-rose-950/40' : 'bg-sky-50 dark:bg-sky-950/40'
+          )}
         >
           <div
-            className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${
-              isDangerous ? 'bg-red-100' : 'bg-blue-100'
-            }`}
+            className={cn(
+              'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border shadow-sm',
+              isDangerous
+                ? 'border-rose-200/80 bg-rose-100 text-rose-700 dark:border-rose-500/30 dark:bg-rose-900/50 dark:text-rose-200'
+                : 'border-sky-200/80 bg-sky-100 text-sky-700 dark:border-sky-500/30 dark:bg-sky-900/50 dark:text-sky-200'
+            )}
           >
-            <AlertCircle
-              className={`h-6 w-6 ${isDangerous ? 'text-red-600' : 'text-blue-600'}`}
-            />
+            <AppIcon icon={AlertCircle} className="h-5 w-5" />
           </div>
-          <div className="flex-1 min-w-0">
+          <div className="min-w-0 flex-1">
             <h3
               id="confirm-dialog-title"
-              className={`text-lg font-semibold ${
-                isDangerous ? 'text-red-900' : 'text-blue-900'
-              }`}
+              className={cn(
+                'text-lg font-semibold tracking-tight',
+                isDangerous
+                  ? 'text-rose-900 dark:text-rose-100'
+                  : 'text-sky-900 dark:text-sky-100'
+              )}
             >
               {title}
             </h3>
@@ -80,28 +87,27 @@ export function ConfirmDialog({
         </div>
 
         <div className="px-6 py-4">
-          <p className="text-sm leading-relaxed text-gray-700">{message}</p>
+          <p className="text-sm leading-relaxed text-muted-foreground">{message}</p>
         </div>
 
-        <div className="flex justify-end gap-3 border-t bg-gray-50 px-6 py-4">
+        <div className="flex justify-end gap-3 border-t border-border/80 bg-muted/30 px-6 py-4">
           <button
             type="button"
             onClick={onCancel}
             disabled={isLoading}
-            className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded-xl border border-input bg-background px-4 py-2 text-sm font-medium text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <X className="h-4 w-4" />
+            <AppIcon icon={X} className="h-4 w-4" />
             {cancelText}
           </button>
           <button
             type="button"
             onClick={onConfirm}
             disabled={isLoading}
-            className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50 ${
-              isDangerous
-                ? 'bg-red-600 hover:bg-red-700'
-                : 'bg-blue-600 hover:bg-blue-700'
-            }`}
+            className={cn(
+              'inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium text-white shadow-sm transition disabled:cursor-not-allowed disabled:opacity-50',
+              isDangerous ? 'bg-rose-600 hover:bg-rose-700' : 'bg-primary hover:bg-primary/90'
+            )}
           >
             {isLoading ? (
               <>
@@ -110,7 +116,7 @@ export function ConfirmDialog({
               </>
             ) : (
               <>
-                <Check className="h-4 w-4" />
+                <AppIcon icon={Check} className="h-4 w-4" />
                 {confirmText}
               </>
             )}

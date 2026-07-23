@@ -25,6 +25,8 @@ public class SapArInvoiceHeadDto
     public int CustBalancePoint { get; set; }
     public decimal TotalAmtBefDis { get; set; }
     public decimal DiscPrcnt { get; set; }
+    /// <summary>ส่วนลดท้ายบิลมูลค่าก่อน VAT (ex-VAT of billDiscAmt); 0 เมื่อไม่มี head DiscPrcnt</summary>
+    public decimal DiscAmtBfVat { get; set; }
     public string DownPaymentNo { get; set; } = string.Empty;
     public decimal DownPaymentAmt { get; set; }
     public decimal DocTotal { get; set; }

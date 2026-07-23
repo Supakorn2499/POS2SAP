@@ -1,5 +1,6 @@
 // src/services/apiClient.ts
 import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios';
+import { getStoredLang, getTranslation } from '@/lib/i18n';
 
 const REFRESH_KEY = 'pos2sapRefreshToken';
 const TOKEN_KEY = 'pos2sapToken';
@@ -83,7 +84,7 @@ apiClient.interceptors.response.use(
       return Promise.reject(new Error('Unauthorized'));
     }
 
-    const msg = err.response?.data?.message ?? err.message ?? 'เกิดข้อผิดพลาด';
+    const msg = err.response?.data?.message ?? err.message ?? getTranslation('errorGeneric', getStoredLang());
     return Promise.reject(new Error(msg));
   }
 );

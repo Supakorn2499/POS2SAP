@@ -1,10 +1,11 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Save, Clock, Database, Gauge, FileText, Receipt, Truck, Wrench } from 'lucide-react';
+import { Save, Clock, Database, Gauge, FileText, Receipt, Truck, Wrench, Settings2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useLanguage } from '@/contexts/LanguageContext';
 import configService from '@/services/configService';
 import ConfigFieldRow from '@/components/config/ConfigFieldRow';
+import { PageHeader } from '@/components/PageHeader';
 import {
   CONFIG_SECTIONS,
   SAP_BASE_KEYS,
@@ -128,29 +129,28 @@ export default function ConfigPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <h1 className="text-xl font-bold">{t('configTitle')}</h1>
-          <p className="text-sm text-muted-foreground">{t('configSubtitleGrouped')}</p>
-        </div>
-      </div>
+      <PageHeader
+        icon={Settings2}
+        title={t('configTitle')}
+        subtitle={t('configSubtitleGrouped')}
+      />
 
-      <div className="flex flex-col gap-6 lg:flex-row">
-        {/* Sidebar navigation */}
-        <nav className="flex shrink-0 flex-row flex-wrap gap-1 lg:w-52 lg:flex-col">
+      <div className="flex flex-col gap-6 xl:flex-row">
+        {/* Sidebar navigation — horizontal chips on tablet */}
+        <nav className="-mx-1 flex shrink-0 gap-1 overflow-x-auto px-1 pb-1 xl:w-52 xl:flex-col xl:overflow-visible xl:pb-0">
           {NAV_ITEMS.map(({ id, labelKey, icon: Icon }) => (
             <button
               key={id}
               type="button"
               onClick={() => setSection(id)}
-              className={`flex items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm transition-colors ${
+              className={`inline-flex shrink-0 items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm transition-colors ${
                 section === id
-                  ? 'bg-primary text-primary-foreground font-medium'
+                  ? 'bg-primary font-medium text-primary-foreground shadow-sm'
                   : 'text-muted-foreground hover:bg-muted hover:text-foreground'
               }`}
             >
-              <Icon className="h-4 w-4 shrink-0" />
-              {t(labelKey)}
+              <Icon className="h-4 w-4 shrink-0" strokeWidth={1.5} absoluteStrokeWidth />
+              <span className="whitespace-nowrap">{t(labelKey)}</span>
             </button>
           ))}
         </nav>

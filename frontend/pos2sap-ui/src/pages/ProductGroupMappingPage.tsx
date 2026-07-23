@@ -1,7 +1,9 @@
 // src/pages/ProductGroupMappingPage.tsx
 import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Layers, Trash2, AlertTriangle } from 'lucide-react';
+import { Boxes, Trash2, AlertTriangle } from 'lucide-react';
+import { AppIcon } from '@/components/ui/AppIcon';
+import { AppSelect } from '@/components/ui/AppSelect';
 import { toast } from 'sonner';
 import productGroupMappingService from '@/services/productGroupMappingService';
 import {
@@ -340,7 +342,7 @@ export default function ProductGroupMappingPage() {
   return (
     <div className="space-y-6 pb-24">
       <MappingPageHeader
-        icon={Layers}
+        icon={Boxes}
         title={t('pgMappingTitle')}
         subtitle={t('pgMappingSubtitle')}
       />
@@ -363,7 +365,7 @@ export default function ProductGroupMappingPage() {
 
       {stats.pendingSap > 0 && (
         <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/40 dark:bg-amber-950/50 dark:text-amber-200">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <AppIcon icon={AlertTriangle} className="mt-0.5 h-4 w-4 shrink-0" />
           <span>{t('pgMappingPendingSapHint')}</span>
         </div>
       )}
@@ -380,17 +382,17 @@ export default function ProductGroupMappingPage() {
             <label htmlFor="pgStatusFilter" className="whitespace-nowrap text-sm font-medium">
               {t('pgMappingFilterStatus')}
             </label>
-            <select
+            <AppSelect
               id="pgStatusFilter"
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
-              className="min-w-40 rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              wrapperClassName="min-w-[10rem]"
             >
               <option value="">{t('pgMappingFilterAll')}</option>
               <option value="PENDING_SAP">{t('pgMappingFilterPendingSap')}</option>
               <option value="ACTIVE">{t('pgMappingFilterActive')}</option>
               <option value="INACTIVE">{t('pgMappingFilterInactive')}</option>
-            </select>
+            </AppSelect>
           </div>
         )}
         actions={(
@@ -508,7 +510,7 @@ export default function ProductGroupMappingPage() {
                         title={t('pgMappingDelete')}
                         className="rounded p-1.5 text-destructive hover:bg-destructive/10 disabled:opacity-30"
                       >
-                        <Trash2 className="h-3.5 w-3.5" />
+                        <AppIcon icon={Trash2} className="h-3.5 w-3.5" />
                       </button>
                     </td>
                   </tr>

@@ -1,6 +1,6 @@
 // src/components/StatCard.tsx
 import { cn } from '@/lib/utils';
-import { useTheme } from '@/contexts/ThemeContext';
+import { AppIcon } from '@/components/ui/AppIcon';
 import type { LucideIcon } from 'lucide-react';
 
 interface Props {
@@ -13,79 +13,38 @@ interface Props {
 
 type Variant = NonNullable<Props['variant']>;
 
-/** Soft pastel — for light mode only */
-const lightCard: Record<Variant, string> = {
-  default: 'border-gray-200 bg-white',
-  success: 'border-emerald-200 bg-emerald-50',
-  danger:  'border-rose-200 bg-rose-50',
-  warning: 'border-amber-200 bg-amber-50',
-  info:    'border-sky-200 bg-sky-50',
-  orange:  'border-orange-200 bg-orange-50',
+/** Quiet accent — icon well only; card stays neutral in both themes */
+const iconWell: Record<Variant, string> = {
+  default: 'bg-muted text-muted-foreground',
+  success: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
+  danger:  'bg-rose-500/10 text-rose-700 dark:text-rose-400',
+  warning: 'bg-amber-500/10 text-amber-700 dark:text-amber-400',
+  info:    'bg-sky-500/10 text-sky-700 dark:text-sky-400',
+  orange:  'bg-orange-500/10 text-orange-700 dark:text-orange-400',
 };
 
-const lightIcon: Record<Variant, string> = {
-  default: 'bg-gray-100 text-gray-600',
-  success: 'bg-emerald-100 text-emerald-600',
-  danger:  'bg-rose-100 text-rose-600',
-  warning: 'bg-amber-100 text-amber-600',
-  info:    'bg-sky-100 text-sky-600',
-  orange:  'bg-orange-100 text-orange-600',
-};
-
-const lightValue: Record<Variant, string> = {
-  default: 'text-slate-900',
-  success: 'text-emerald-800',
-  danger:  'text-rose-800',
-  warning: 'text-amber-800',
-  info:    'text-sky-800',
-  orange:  'text-orange-800',
-};
-
-/** Richer tinted cards — for dark mode only */
-const darkCard: Record<Variant, string> = {
-  default: 'border-slate-600 bg-slate-800/90',
-  success: 'border-emerald-500/40 bg-emerald-950/80',
-  danger:  'border-rose-500/40 bg-rose-950/80',
-  warning: 'border-amber-500/40 bg-amber-950/80',
-  info:    'border-sky-500/40 bg-sky-950/80',
-  orange:  'border-orange-500/40 bg-orange-950/80',
-};
-
-const darkIcon: Record<Variant, string> = {
-  default: 'bg-slate-700 text-slate-200',
-  success: 'bg-emerald-500 text-white',
-  danger:  'bg-rose-500 text-white',
-  warning: 'bg-amber-500 text-white',
-  info:    'bg-sky-500 text-white',
-  orange:  'bg-orange-500 text-white',
-};
-
-const darkValue: Record<Variant, string> = {
-  default: 'text-slate-100',
-  success: 'text-emerald-200',
-  danger:  'text-rose-200',
-  warning: 'text-amber-200',
-  info:    'text-sky-200',
-  orange:  'text-orange-200',
+const valueTone: Record<Variant, string> = {
+  default: 'text-foreground',
+  success: 'text-emerald-700 dark:text-emerald-400',
+  danger:  'text-rose-700 dark:text-rose-400',
+  warning: 'text-amber-700 dark:text-amber-400',
+  info:    'text-sky-700 dark:text-sky-400',
+  orange:  'text-orange-700 dark:text-orange-400',
 };
 
 export function StatCard({ title, value, icon: Icon, variant = 'default', loading = false }: Props) {
-  // ponytail: bind to ThemeContext so OS dark preference can't override app toggle
-  const { theme } = useTheme();
-  const isDark = theme === 'dark';
-
   return (
-    <div className={cn('rounded-xl border p-4 shadow-sm', isDark ? darkCard[variant] : lightCard[variant])}>
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">{title}</p>
-        <div className={cn('rounded-lg p-2', isDark ? darkIcon[variant] : lightIcon[variant])}>
-          <Icon className="h-4 w-4" />
+    <div className="rounded-2xl border border-border bg-card p-4 text-card-foreground shadow-sm">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{title}</p>
+        <div className={cn('rounded-lg p-2', iconWell[variant])}>
+          <AppIcon icon={Icon} className="h-4 w-4" />
         </div>
       </div>
       <p
         className={cn(
-          'mt-2 text-2xl font-bold',
-          loading ? 'text-muted-foreground' : isDark ? darkValue[variant] : lightValue[variant]
+          'mt-2.5 text-2xl font-semibold tracking-tight tabular-nums',
+          loading ? 'text-muted-foreground' : valueTone[variant]
         )}
       >
         {loading ? '...' : value.toLocaleString('th-TH')}

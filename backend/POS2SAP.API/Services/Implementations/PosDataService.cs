@@ -1,4 +1,5 @@
 using System.Data;
+using System.Text.RegularExpressions;
 using Dapper;
 using POS2SAP.API.Common;
 using POS2SAP.API.DTOs.Sap;
@@ -28,13 +29,14 @@ public class PosDataService : IPosDataService
     private const string ArInvoiceHeadSelect = @"
                 a.ReceiptNumber                                          AS PosDocNo,
                 a.SaleDate                                               AS DocDate,
-                ISNULL(NULLIF(s.PTTShopCode, ''), s.shopcode)            AS BranchCode,
-                ISNULL(s.shopname, '')                                   AS BranchName,
+                ISNULL(NULLIF(LTRIM(RTRIM(ssm.SapBranchCode)), ''), ISNULL(NULLIF(s.PTTShopCode, ''), s.shopcode)) AS BranchCode,
+                ISNULL(NULLIF(LTRIM(RTRIM(ssm.SapBranchName)), ''), ISNULL(s.shopname, '')) AS BranchName,
                 CAST(a.ComputerID AS NVARCHAR(20))                       AS PosId,
-                ISNULL(s.SLOC, '')                                       AS CardCode,
+                ISNULL(NULLIF(LTRIM(RTRIM(ssm.SapCardCode)), ''), ISNULL(s.SLOC, '')) AS CardCode,
                 CASE WHEN ft.FullTaxInvoiceID IS NOT NULL
                      THEN ISNULL(ft.InvoiceName, '')
-                     ELSE ISNULL(s.shopname, '') END                     AS CardName,
+                     ELSE ISNULL(NULLIF(LTRIM(RTRIM(ssm.SapBranchName)), ''), ISNULL(s.shopname, '')) END
+                                                                         AS CardName,
                 CASE WHEN ft.FullTaxInvoiceID IS NOT NULL THEN ft.InvoiceTaxID ELSE NULL END
                                                                          AS CustTaxId,
                 CASE WHEN ft.FullTaxInvoiceID IS NOT NULL THEN
@@ -56,7 +58,7 @@ public class PosDataService : IPosDataService
                 CASE WHEN ISNULL(a.MemberID, 0) > 0
                      THEN ISNULL(NULLIF(LTRIM(RTRIM(m.MemberCode)), ''), CAST(a.MemberID AS NVARCHAR(20)))
                      ELSE '' END                                         AS CustMemberNo,
-                ISNULL(s.BranchNo, '')                                   AS VatBranch,
+                ISNULL(NULLIF(LTRIM(RTRIM(ssm.SapVatBranch)), ''), ISNULL(s.BranchNo, '')) AS VatBranch,
                 a.TransactionNote                                        AS Comments,
                 ISNULL(sm.SaleModeName, CAST(a.SaleMode AS NVARCHAR(20))) AS Channel,
                 mpoint.EarnPoint                                         AS CustBillPoint,
@@ -77,6 +79,7 @@ public class PosDataService : IPosDataService
     private const string ArInvoiceHeadJoins = @"
             FROM ordertransaction a
             LEFT JOIN shop_data s ON s.ShopID = a.ShopID
+            LEFT JOIN shop_sap_mapping ssm ON ssm.ShopID = a.ShopID AND ssm.IsActive = 1
             LEFT JOIN salemode sm ON sm.SaleModeID = TRY_CAST(a.SaleMode AS INT)
             OUTER APPLY (
                 SELECT TOP 1
@@ -217,7 +220,7 @@ public class PosDataService : IPosDataService
         // Optional branch filter — appended as a literal string (safe: branchCode is parameterised separately)
         var branchClause = string.IsNullOrWhiteSpace(branchCode)
             ? ""
-            : "AND (s.shopcode = @BranchCode OR s.PTTShopCode = @BranchCode OR s.SLOC = @BranchCode)";
+            : "AND (s.shopcode = @BranchCode OR s.PTTShopCode = @BranchCode OR s.SLOC = @BranchCode OR ssm.SapBranchCode = @BranchCode OR ssm.SapCardCode = @BranchCode)";
 
         var headSql = $@"
             SELECT TOP {batchSize}
@@ -445,6 +448,13 @@ public class PosDataService : IPosDataService
         var docTotal = Math.Max(0m, (decimal)Dec(h.DocTotal) - voucherTotal);
 
         var headDto = MapHead(h, headDiscPrcnt, docTotal);
+        headDto.DiscAmtBfVat = headDiscPrcnt > 0
+            ? Math.Round(billDiscAmt / 1.07m, 2, MidpointRounding.AwayFromZero)
+            : 0m;
+        // RewardPointHistory often omits PointType=2/5 for item redeem; fall back to promo name ("Redeem 12Point …")
+        var promoRedeemPts = SumRedeemPointsFromPromos(extras.Promos);
+        if (promoRedeemPts > headDto.CustRedeemPoing)
+            headDto.CustRedeemPoing = promoRedeemPts;
         var docNum = headDto.DocNum;
         var whs = headDto.BranchCode;
         var dl = new List<SapArInvoiceLineDto>();
@@ -501,20 +511,21 @@ public class PosDataService : IPosDataService
 
     private const string IncomingPaymentHeadJoins = @"
             LEFT JOIN shop_data s  ON s.ShopID = a.ShopID
+            LEFT JOIN shop_sap_mapping ssm ON ssm.ShopID = a.ShopID AND ssm.IsActive = 1
             LEFT JOIN salemode sm  ON sm.SaleModeID = TRY_CAST(a.SaleMode AS INT)";
 
-    /// CardCode=SLOC, BranchCode=PTTShopCode, BranchName/CardName=ShopName, VatBranch=BranchNo.
+    /// CardCode=SLOC, BranchCode=PTTShopCode, BranchName/CardName=ShopName, VatBranch=BranchNo (shop_sap_mapping overrides).
     private const string IncomingPaymentHeadSelect = @"
                     a.ReceiptNumber                                              AS PosDocNo,
                     CONVERT(varchar(10), a.SaleDate, 23)                        AS DocDate,
                     CONVERT(varchar(10), a.SaleDate, 23)                        AS SettlementDate,
                     CASE WHEN a.PaidTime IS NULL THEN '' ELSE CONVERT(varchar(8), a.PaidTime, 108) END AS SettlementTime,
-                    ISNULL(s.SLOC, '')                                          AS CardCode,
-                    ISNULL(s.shopname, '')                                      AS CardName,
+                    ISNULL(NULLIF(LTRIM(RTRIM(ssm.SapCardCode)), ''), ISNULL(s.SLOC, '')) AS CardCode,
+                    ISNULL(NULLIF(LTRIM(RTRIM(ssm.SapBranchName)), ''), ISNULL(s.shopname, '')) AS CardName,
                     CAST(a.ComputerID AS NVARCHAR(20))                          AS PosId,
-                    ISNULL(NULLIF(s.PTTShopCode, ''), s.shopcode)               AS BranchCode,
-                    ISNULL(s.shopname, '')                                      AS BranchName,
-                    ISNULL(s.BranchNo, '')                                      AS VatBranch,
+                    ISNULL(NULLIF(LTRIM(RTRIM(ssm.SapBranchCode)), ''), ISNULL(NULLIF(s.PTTShopCode, ''), s.shopcode)) AS BranchCode,
+                    ISNULL(NULLIF(LTRIM(RTRIM(ssm.SapBranchName)), ''), ISNULL(s.shopname, '')) AS BranchName,
+                    ISNULL(NULLIF(LTRIM(RTRIM(ssm.SapVatBranch)), ''), ISNULL(s.BranchNo, '')) AS VatBranch,
                     ISNULL(sm.SaleModeName, CAST(a.SaleMode AS NVARCHAR(20)))   AS Channel,
                     ISNULL(a.TransactionNote, '')                               AS Comments,
                     ISNULL(a.ReceiptPayPrice, 0)                                AS DocTotal,
@@ -584,11 +595,12 @@ public class PosDataService : IPosDataService
                       AND il.status = 'SUCCESS'
                       AND il.is_deleted = 0
                       AND (
-                        il.pos_doc_no = (ISNULL(NULLIF(s.PTTShopCode, ''), s.shopcode) + N'|' + a.ReceiptNumber)
+                        il.pos_doc_no = (ISNULL(NULLIF(LTRIM(RTRIM(ssm.SapBranchCode)), ''), ISNULL(NULLIF(s.PTTShopCode, ''), s.shopcode)) + N'|' + a.ReceiptNumber)
                         OR (
                           il.pos_doc_no = a.ReceiptNumber
                           AND (
-                            il.branch_code = ISNULL(NULLIF(s.PTTShopCode, ''), s.shopcode)
+                            il.branch_code = ISNULL(NULLIF(LTRIM(RTRIM(ssm.SapBranchCode)), ''), ISNULL(NULLIF(s.PTTShopCode, ''), s.shopcode))
+                            OR il.branch_code = ISNULL(NULLIF(LTRIM(RTRIM(ssm.SapCardCode)), ''), ISNULL(s.SLOC, ''))
                             OR il.branch_code = ISNULL(s.SLOC, '')
                             OR ISNULL(il.branch_code, '') = ''
                           )
@@ -598,7 +610,7 @@ public class PosDataService : IPosDataService
 
             var branchClause = string.IsNullOrWhiteSpace(branchCode)
                 ? ""
-                : "AND (s.shopcode = @BranchCode OR s.PTTShopCode = @BranchCode OR s.SLOC = @BranchCode)";
+                : "AND (s.shopcode = @BranchCode OR s.PTTShopCode = @BranchCode OR s.SLOC = @BranchCode OR ssm.SapBranchCode = @BranchCode OR ssm.SapCardCode = @BranchCode)";
 
             headSql = $@"
                 SELECT TOP {batchSize}
@@ -1016,6 +1028,9 @@ public class PosDataService : IPosDataService
 
     internal static SapArInvoiceLineDto MapLine(dynamic l, string docNum, string whsCode, int idx)
     {
+        var price = Dec(l.Price);
+        var qty = Dec(l.Quantity);
+        var discPrcnt = Dec(l.DiscPrcnt);
         return new SapArInvoiceLineDto
         {
             DocNum       = docNum,
@@ -1024,10 +1039,11 @@ public class PosDataService : IPosDataService
             ItemCategory = Str(l.ItemCategory),
             Dscription   = string.Empty,
             Text         = Str(l.Text),
-            Quantity     = Dec(l.Quantity),
+            Quantity     = qty,
             UomCode      = Str(l.UomCode),
-            DiscPrcnt    = Dec(l.DiscPrcnt),
-            Price        = Dec(l.Price),
+            DiscPrcnt    = discPrcnt,
+            Price        = price,
+            DiscAmtBfVat = ComputeDiscAmtBfVat(price, qty, discPrcnt),
             PriceAfVat   = Dec(l.PriceAfVat),
             VatPrcnt     = gbVar.SapVatPrcnt,
             VatGroup     = gbVar.SapVatGroup,
@@ -1038,6 +1054,29 @@ public class PosDataService : IPosDataService
             CouponNo     = new List<object>()
         };
     }
+
+    /// <summary>ส่วนลดมูลค่าก่อน VAT = Price × Qty × DiscPrcnt / 100 (เฉพาะเมื่อมีส่วนลดบรรทัด)</summary>
+    internal static decimal ComputeDiscAmtBfVat(decimal price, decimal qty, decimal discPrcnt) =>
+        discPrcnt <= 0 || price <= 0 || qty <= 0
+            ? 0m
+            : Math.Round(price * qty * discPrcnt / 100m, 2, MidpointRounding.AwayFromZero);
+
+    // Matches "Redeem 12Point", "Redeem 10 Piont", "Redeem10 Point" (POS promo naming)
+    private static readonly Regex RedeemPointsInPromoName = new(
+        @"(\d+)\s*P(?:oi|io)n?ts?",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    /// <summary>Parse redeem points from promotion name when it looks like a Redeem-N-Point promo.</summary>
+    internal static int ParseRedeemPointsFromPromoName(string? promotionName)
+    {
+        if (string.IsNullOrWhiteSpace(promotionName)) return 0;
+        if (promotionName.IndexOf("Redeem", StringComparison.OrdinalIgnoreCase) < 0) return 0;
+        var m = RedeemPointsInPromoName.Match(promotionName);
+        return m.Success && int.TryParse(m.Groups[1].Value, out var n) && n > 0 ? n : 0;
+    }
+
+    internal static int SumRedeemPointsFromPromos(IEnumerable<ArPromoRow> promos) =>
+        promos.Sum(p => ParseRedeemPointsFromPromoName(p.PromotionName));
 
     internal static void AddServiceChargeLine(
         List<SapArInvoiceLineDto> lines,

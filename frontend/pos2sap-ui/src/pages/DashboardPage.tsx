@@ -2,14 +2,17 @@
 import { useState } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Clock, CheckCircle, XCircle, RefreshCw, Activity } from 'lucide-react';
+import { Clock, CheckCircle, XCircle, RefreshCw, Activity, LayoutDashboard } from 'lucide-react';
 import { toast } from 'sonner';
 import { useLanguage } from '@/contexts/LanguageContext';
 import dashboardService from '@/services/dashboardService';
 import monitorService from '@/services/monitorService';
 import { resendInterfaceLog } from '@/lib/interfaceResend';
+import { cn } from '@/lib/utils';
 import { StatCard } from '@/components/StatCard';
 import { StatusBadge } from '@/components/StatusBadge';
+import { AppSelect } from '@/components/ui/AppSelect';
+import { PageHeader } from '@/components/PageHeader';
 import type { BranchOptionDto, InterfaceLogDto, PagedResult } from '@/types/monitor';
 
 const PAGE_SIZE = 10;
@@ -18,15 +21,17 @@ const PAGE_SIZE = 10;
 // TopBranchesCard Component
 // =================================================================
 function TopBranchesCard({ title, branches, isLoading, t }: { title: string; branches: { branchCode: string; branchName?: string; total: number; success: number; failed: number; }[]; isLoading: boolean; t: (key: string, params?: Record<string, string | number>) => string }) {
+  if (!isLoading && branches.length === 0) return null;
+
   return (
-    <div className="rounded-xl border bg-card text-card-foreground shadow">
-      <div className="p-6">
-        <h3 className="font-semibold">{title}</h3>
+    <div className="rounded-2xl border bg-card text-card-foreground shadow-sm">
+      <div className="p-5">
+        <h3 className="text-sm font-semibold tracking-tight">{title}</h3>
       </div>
-      <div className="px-6 pb-6">
+      <div className="px-5 pb-5">
         {isLoading ? (
           <div className="h-48 animate-pulse rounded-md bg-muted" />
-        ) : branches.length > 0 ? (
+        ) : (
           <div className="space-y-4">
             {branches.map(branch => (
               <div key={branch.branchCode} className="flex items-center">
@@ -41,8 +46,6 @@ function TopBranchesCard({ title, branches, isLoading, t }: { title: string; bra
               </div>
             ))}
           </div>
-        ) : (
-          <p className="text-sm text-center text-muted-foreground py-10">{t('noData')}</p>
         )}
       </div>
     </div>
@@ -106,43 +109,39 @@ function RecentLogsCard({
   };
   
   return (
-    <div className="rounded-xl border bg-card text-card-foreground shadow col-span-1 lg:col-span-3">
+    <div className="rounded-2xl border bg-card text-card-foreground shadow-sm col-span-1 xl:col-span-3">
       <div className="p-6">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h3 className="font-semibold">{t('recentLogsTitle')}</h3>
             <p className="text-xs text-muted-foreground">{t('recentLogsSubtitle')}</p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-2 rounded-lg border bg-background px-3 py-2 text-sm">
-              <label htmlFor="branchFilter" className="text-xs text-muted-foreground">{t('branch')}</label>
-              <select
-                id="branchFilter"
-                value={branchFilter}
-                onChange={(e) => onBranchChange(e.target.value)}
-                className="w-40 bg-transparent text-sm outline-none"
-              >
-                <option value="">{t('allBranches')}</option>
-                {branchOptions.map((branch) => (
-                  <option key={branch.branchCode} value={branch.branchCode}>
-                    {branch.branchName || branch.branchCode}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="flex items-center gap-2 rounded-lg border bg-background px-3 py-2 text-sm">
-              <label htmlFor="statusFilter" className="text-xs text-muted-foreground">{t('status')}</label>
-              <select
-                id="statusFilter"
-                value={statusFilter}
-                onChange={(e) => onStatusChange(e.target.value as 'ALL' | 'FAILED' | 'RETRY')}
-                className="bg-transparent text-sm outline-none"
-              >
-                <option value="ALL">{t('allStatuses')}</option>
-                <option value="FAILED">{t('failed')}</option>
-                <option value="RETRY">{t('retry')}</option>
-              </select>
-            </div>
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center">
+            <AppSelect
+              id="branchFilter"
+              value={branchFilter}
+              onChange={(e) => onBranchChange(e.target.value)}
+              wrapperClassName="sm:min-w-[11rem]"
+              aria-label={t('branch')}
+            >
+              <option value="">{t('allBranches')}</option>
+              {branchOptions.map((branch) => (
+                <option key={branch.branchCode} value={branch.branchCode}>
+                  {branch.branchName || branch.branchCode}
+                </option>
+              ))}
+            </AppSelect>
+            <AppSelect
+              id="statusFilter"
+              value={statusFilter}
+              onChange={(e) => onStatusChange(e.target.value as 'ALL' | 'FAILED' | 'RETRY')}
+              wrapperClassName="sm:min-w-[9rem]"
+              aria-label={t('status')}
+            >
+              <option value="ALL">{t('allStatuses')}</option>
+              <option value="FAILED">{t('failed')}</option>
+              <option value="RETRY">{t('retry')}</option>
+            </AppSelect>
           </div>
         </div>
       </div>
@@ -190,25 +189,27 @@ function RecentLogsCard({
           <p className="py-20 text-center text-sm text-muted-foreground">{t('noRecentLogs')}</p>
         )}
       </div>
-      <div className="px-6 py-4 flex flex-wrap items-center justify-between gap-2 text-sm">
-        <span className="text-muted-foreground">{t('pageOf', { page, total: totalPages })}</span>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => onPageChange(Math.max(1, page - 1))}
-            disabled={page <= 1}
-            className="rounded border px-3 py-1 text-xs hover:bg-muted disabled:opacity-40"
-          >
-            {t('previous')}
-          </button>
-          <button
-            onClick={() => onPageChange(Math.min(totalPages, page + 1))}
-            disabled={page >= totalPages}
-            className="rounded border px-3 py-1 text-xs hover:bg-muted disabled:opacity-40"
-          >
-            {t('next')}
-          </button>
+      {totalPages > 0 && (
+        <div className="px-6 py-4 flex flex-wrap items-center justify-between gap-2 text-sm">
+          <span className="text-muted-foreground">{t('pageOf', { page, total: totalPages })}</span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => onPageChange(Math.max(1, page - 1))}
+              disabled={page <= 1}
+              className="rounded border px-3 py-1 text-xs hover:bg-muted disabled:opacity-40"
+            >
+              {t('previous')}
+            </button>
+            <button
+              onClick={() => onPageChange(Math.min(totalPages, page + 1))}
+              disabled={page >= totalPages}
+              className="rounded border px-3 py-1 text-xs hover:bg-muted disabled:opacity-40"
+            >
+              {t('next')}
+            </button>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -274,38 +275,47 @@ export default function DashboardPage() {
 
   const counts = data?.counts;
   const monthLabel = monthOffset === 0 ? t('currentMonth') : t('lastMonth');
+  const failedBranches = data?.topFailedBranches ?? [];
+  const topBranches = data?.topBranches ?? [];
+  const showBranchSidebar = isLoading || failedBranches.length > 0 || topBranches.length > 0;
+  const recentTotalPages = recentLogsPage?.totalPages ?? 0;
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-bold">{t('dashboard')}</h1>
-          <p className="text-sm text-muted-foreground">{t('dashboardSubtitle', { month: monthLabel })}</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-            <div>
-              <select value={interfaceType} onChange={(e) => setInterfaceType(e.target.value)} className="rounded-md border bg-background px-3 py-2 text-sm">
-                <option value="ARInvoice">ARInvoice</option>
-                <option value="IncomingPayment">IncomingPayment</option>
-                <option value="Delivery">Delivery</option>
-              </select>
+      <PageHeader
+        icon={LayoutDashboard}
+        title={t('dashboard')}
+        subtitle={t('dashboardSubtitle', { month: monthLabel })}
+        actions={(
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center">
+            <AppSelect
+              value={interfaceType}
+              onChange={(e) => { setInterfaceType(e.target.value); setPage(1); }}
+              wrapperClassName="sm:min-w-[12rem]"
+            >
+              <option value="ARInvoice">{t('interfaceTypeAR')}</option>
+              <option value="IncomingPayment">{t('interfaceTypeAP')}</option>
+              <option value="Delivery">{t('interfaceTypeDL')}</option>
+            </AppSelect>
+            <div className="inline-flex rounded-xl border border-border/80 bg-muted/40 p-0.5">
+              <button
+                type="button"
+                onClick={() => { setMonthOffset(0); setPage(1); }}
+                className={`min-h-9 flex-1 rounded-lg px-3 py-2 text-xs font-medium transition sm:flex-none ${monthOffset === 0 ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                {t('currentMonth')}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setMonthOffset(1); setPage(1); }}
+                className={`min-h-9 flex-1 rounded-lg px-3 py-2 text-xs font-medium transition sm:flex-none ${monthOffset === 1 ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                {t('lastMonth')}
+              </button>
             </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={() => { setMonthOffset(0); setPage(1); }}
-              className={`rounded-full px-3 py-2 text-xs font-medium transition ${monthOffset === 0 ? 'bg-primary text-primary-foreground' : 'bg-muted/60 text-muted-foreground hover:bg-muted'}`}
-            >
-            {t('currentMonth')}
-            </button>
-            <button
-              onClick={() => { setMonthOffset(1); setPage(1); }}
-              className={`rounded-full px-3 py-2 text-xs font-medium transition ${monthOffset === 1 ? 'bg-primary text-primary-foreground' : 'bg-muted/60 text-muted-foreground hover:bg-muted'}`}
-            >
-            {t('lastMonth')}
-            </button>
           </div>
-        </div>
-      </div>
+        )}
+      />
       
       {isError && (
         <div className="rounded-lg border border-destructive bg-destructive/10 p-3 text-sm text-destructive">
@@ -313,7 +323,7 @@ export default function DashboardPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5 md:gap-4">
         <StatCard title={t('pending')} value={counts?.pending ?? 0} icon={Clock} variant="warning" loading={isLoading} />
         <StatCard title={t('processing')} value={counts?.processing ?? 0} icon={Activity} variant="info" loading={isLoading} />
         <StatCard title={t('success')} value={counts?.success ?? 0} icon={CheckCircle} variant="success" loading={isLoading} />
@@ -321,12 +331,12 @@ export default function DashboardPage() {
         <StatCard title={t('retry')} value={counts?.retry ?? 0} icon={RefreshCw} variant="orange" loading={isLoading} />
       </div>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-4">
+      <div className={cn('grid grid-cols-1 gap-6', showBranchSidebar && 'xl:grid-cols-4')}>
         <RecentLogsCard
           logs={recentLogsPage?.items ?? []}
           isLoading={recentLogsLoading}
           page={page}
-          totalPages={recentLogsPage?.totalPages ?? 1}
+          totalPages={recentTotalPages}
           branchFilter={branchFilter}
           branchOptions={branchOptions}
           statusFilter={statusFilter}
@@ -336,10 +346,12 @@ export default function DashboardPage() {
           onResendSuccess={() => refetchRecentLogs()}
           t={t}
         />
-        <div className="space-y-6">
-          <TopBranchesCard title={t('topFailedBranches')} branches={data?.topFailedBranches ?? []} isLoading={isLoading} t={t} />
-          <TopBranchesCard title={t('topBranches')} branches={data?.topBranches ?? []} isLoading={isLoading} t={t} />
-        </div>
+        {showBranchSidebar && (
+          <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-1">
+            <TopBranchesCard title={t('topFailedBranches')} branches={failedBranches} isLoading={isLoading} t={t} />
+            <TopBranchesCard title={t('topBranches')} branches={topBranches} isLoading={isLoading} t={t} />
+          </div>
+        )}
       </div>
     </div>
   );

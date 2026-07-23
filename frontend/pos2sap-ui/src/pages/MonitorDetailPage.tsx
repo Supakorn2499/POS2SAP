@@ -2,12 +2,13 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, RefreshCw, CheckCircle, Clock, Activity, XCircle, Trash2 } from 'lucide-react';
+import { ArrowLeft, RefreshCw, CheckCircle2, Clock, Activity, XCircle, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import monitorService from '@/services/monitorService';
 import { StatusBadge } from '@/components/StatusBadge';
 import { JsonViewer } from '@/components/JsonViewer';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { AppIcon } from '@/components/ui/AppIcon';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { fmtDate, fmtDatetime, fmt, cn } from '@/lib/utils';
 import { interfaceTypeLabel, resendInterfaceLog } from '@/lib/interfaceResend';
@@ -16,11 +17,11 @@ type Tab = 'request' | 'response' | 'source';
 
 const statusOrder = ['PENDING', 'PROCESSING', 'SUCCESS', 'FAILED', 'RETRY'] as const;
 const statusIcon: Record<string, React.ReactNode> = {
-  PENDING:    <Clock className="h-4 w-4" />,
-  PROCESSING: <Activity className="h-4 w-4" />,
-  SUCCESS:    <CheckCircle className="h-4 w-4" />,
-  FAILED:     <XCircle className="h-4 w-4" />,
-  RETRY:      <RefreshCw className="h-4 w-4" />,
+  PENDING:    <AppIcon icon={Clock} className="h-4 w-4" />,
+  PROCESSING: <AppIcon icon={Activity} className="h-4 w-4" />,
+  SUCCESS:    <AppIcon icon={CheckCircle2} className="h-4 w-4" />,
+  FAILED:     <AppIcon icon={XCircle} className="h-4 w-4" />,
+  RETRY:      <AppIcon icon={RefreshCw} className="h-4 w-4" />,
 };
 
 export default function MonitorDetailPage() {
@@ -96,22 +97,22 @@ export default function MonitorDetailPage() {
         onCancel={() => setDeleteOpen(false)}
       />
       {/* Header */}
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <button onClick={() => navigate('/monitor')}
-          className="flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm hover:bg-muted">
-          <ArrowLeft className="h-4 w-4" /> {t('detailBack')}
+          className="inline-flex items-center gap-1.5 rounded-xl border border-input bg-background px-3 py-2 text-sm font-medium shadow-sm transition hover:bg-muted">
+          <AppIcon icon={ArrowLeft} className="h-4 w-4" /> {t('detailBack')}
         </button>
-        <div className="flex-1">
-          <h1 className="text-xl font-bold">{t('detailTitle')}: {data.posDocNo}</h1>
+        <div className="min-w-0 flex-1">
+          <h1 className="text-xl font-semibold tracking-tight">{t('detailTitle')}: {data.posDocNo}</h1>
           <p className="text-sm text-muted-foreground">{t('detailId')}: {data.id}</p>
         </div>
         {canDelete && (
           <button
             onClick={() => setDeleteOpen(true)}
             disabled={deleting}
-            className="flex items-center gap-2 rounded-lg border border-destructive px-4 py-2 text-sm font-medium text-destructive hover:bg-destructive hover:text-white disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded-xl border border-destructive/30 px-4 py-2 text-sm font-medium text-destructive transition hover:bg-destructive hover:text-destructive-foreground disabled:opacity-50"
           >
-            <Trash2 className="h-4 w-4" />
+            <AppIcon icon={Trash2} className="h-4 w-4" />
             {t('deleteLog')}
           </button>
         )}
@@ -119,9 +120,9 @@ export default function MonitorDetailPage() {
           <button
             onClick={handleRetry}
             disabled={retrying}
-            className="flex items-center gap-2 rounded-lg bg-orange-500 px-4 py-2 text-sm font-medium text-white hover:bg-orange-600 disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded-xl bg-orange-500 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-orange-600 disabled:opacity-50"
           >
-            <RefreshCw className="h-4 w-4" />
+            <AppIcon icon={RefreshCw} className="h-4 w-4" />
             {retrying ? t('retrying') : t('retry')}
           </button>
         )}
@@ -181,9 +182,9 @@ export default function MonitorDetailPage() {
       <div className="rounded-xl border bg-card shadow-sm">
         <div className="flex border-b">
           {([
-            { key: 'request', label: 'SAP Request' },
-            { key: 'response', label: 'SAP Response' },
-            { key: 'source', label: 'POS Data' },
+            { key: 'request' as const, label: t('sapRequest') },
+            { key: 'response' as const, label: t('sapResponse') },
+            { key: 'source' as const, label: t('posData') },
           ] as { key: Tab; label: string }[]).map(({ key, label }) => (
             <button
               key={key}

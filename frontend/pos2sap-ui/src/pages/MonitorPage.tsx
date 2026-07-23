@@ -2,27 +2,23 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { Search, X, Play, RefreshCw, Download } from 'lucide-react';
+import { Search, X, Play, RefreshCw, Download, Activity } from 'lucide-react';
 import { toast } from 'sonner';
 import monitorService from '@/services/monitorService';
 import interfaceService from '@/services/interfaceService';
 import { StatusBadge } from '@/components/StatusBadge';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { DateInputDdMmYyyy } from '@/components/DateInputDdMmYyyy';
+import { AppIcon } from '@/components/ui/AppIcon';
+import { AppSelect } from '@/components/ui/AppSelect';
+import { PageHeader } from '@/components/PageHeader';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { fmtDate, fmtDatetime, fmt, todayStr, cn } from '@/lib/utils';
 import { downloadCsv } from '@/lib/downloadCsv';
+import { interfaceTypeLabel, interfaceTypeToTrigger } from '@/lib/interfaceResend';
 import type { BranchOptionDto, InterfaceLogDto, InterfaceLogQueryParams } from '@/types/monitor';
 
 const STATUS_OPTIONS = ['', 'PENDING', 'PROCESSING', 'SUCCESS', 'FAILED', 'RETRY'];
-
-function interfaceTypeToTrigger(interfaceType: string): string {
-  switch (interfaceType) {
-    case 'AP': return 'IncomingPayment';
-    case 'DL': return 'Delivery';
-    default: return 'ARInvoice';
-  }
-}
 
 const FILTER_KEY = 'monitorFilters';
 
@@ -60,7 +56,7 @@ export default function MonitorPage() {
   const [params, setParams] = useState<InterfaceLogQueryParams>(() => {
     const s = loadFilters();
     if (s) return {
-      page: 1, pageSize: 20, sortBy: 'created_at', sortDirection: 'desc',
+      page: 1, pageSize: 10, sortBy: 'created_at', sortDirection: 'desc',
       interfaceType: s.interfaceType || 'ARInvoice',
       search:        s.search        || undefined,
       status:        s.status        || undefined,
@@ -68,7 +64,7 @@ export default function MonitorPage() {
       dateFrom:      s.dateFrom      || undefined,
       dateTo:        s.dateTo        || undefined,
     } as InterfaceLogQueryParams;
-    return { page: 1, pageSize: 20, sortBy: 'created_at', sortDirection: 'desc', interfaceType: 'ARInvoice' };
+    return { page: 1, pageSize: 10, sortBy: 'created_at', sortDirection: 'desc', interfaceType: 'ARInvoice' };
   });
 
   // Persist committed params to sessionStorage whenever they change
@@ -116,7 +112,7 @@ export default function MonitorPage() {
       dateFrom: pendingDateFrom || undefined,
       dateTo: pendingDateTo || undefined,
       page: 1,
-      pageSize: 20,
+      pageSize: 10,
       sortBy: 'created_at',
       sortDirection: 'desc',
     } as InterfaceLogQueryParams;
@@ -137,7 +133,7 @@ export default function MonitorPage() {
     setPendingSearch(''); setPendingStatus(''); setPendingBranch(''); setPendingInterface('ARInvoice');
     setPendingDateFrom(''); setPendingDateTo('');
     sessionStorage.removeItem(FILTER_KEY);
-    setParams({ page: 1, pageSize: 20, sortBy: 'created_at', sortDirection: 'desc', interfaceType: 'ARInvoice' });
+    setParams({ page: 1, pageSize: 10, sortBy: 'created_at', sortDirection: 'desc', interfaceType: 'ARInvoice' });
   }
 
   async function handleExportExcel() {
@@ -267,10 +263,10 @@ export default function MonitorPage() {
       {/* Confirm Dialog — Send single record */}
       <ConfirmDialog
         isOpen={confirmDialog.isOpen}
-        title="ยืนยันการส่ง"
-        message={`คุณต้องการส่ง ${confirmDialog.docNo} ไปที่ SAP ใช่หรือไม่?`}
-        confirmText="ส่ง"
-        cancelText="ยกเลิก"
+        title={t('sendConfirmTitle')}
+        message={t('sendConfirmMsg', { docNo: confirmDialog.docNo })}
+        confirmText={t('send')}
+        cancelText={t('cancel')}
         isLoading={sendingId === confirmDialog.docNo}
         onConfirm={handleConfirmSend}
         onCancel={handleCancelSend}
@@ -278,78 +274,82 @@ export default function MonitorPage() {
       {/* Confirm Dialog — Trigger All */}
       <ConfirmDialog
         isOpen={triggerConfirmOpen}
-        title="ยืนยัน Trigger All"
-        message={`ต้องการส่งรายการ PENDING/RETRY ทั้งหมด (${pendingInterface}) ไปยัง SAP ใช่หรือไม่?`}
-        confirmText="ยืนยัน"
-        cancelText="ยกเลิก"
+        title={t('triggerAllConfirmTitle')}
+        message={t('triggerAllConfirmMsg', { type: interfaceTypeLabel(pendingInterface, t) })}
+        confirmText={t('confirm')}
+        cancelText={t('cancel')}
         isLoading={triggering}
         onConfirm={handleConfirmTrigger}
         onCancel={() => setTriggerConfirmOpen(false)}
       />
 
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold">{t('monitor')}</h1>
-          <p className="text-sm text-muted-foreground">{t('monitorSubtitle')}</p>
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={() => void handleExportExcel()}
-            disabled={exporting || isLoading}
-            className="flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium hover:bg-muted disabled:opacity-50"
-          >
-            <Download className="h-4 w-4" />
-            {exporting ? t('exporting') : t('exportToExcel')}
-          </button>
-          <button
-            onClick={handleTrigger}
-            disabled={triggering}
-            className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-          >
-            <Play className="h-4 w-4" />
-            {triggering ? t('triggerAllSending') : t('triggerAll')}
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        icon={Activity}
+        title={t('monitor')}
+        subtitle={t('monitorSubtitle')}
+        actions={(
+          <>
+            <button
+              type="button"
+              onClick={() => void handleExportExcel()}
+              disabled={exporting || isLoading}
+              className="app-btn-ghost"
+            >
+              <AppIcon icon={Download} className="h-4 w-4" />
+              {exporting ? t('exporting') : t('exportToExcel')}
+            </button>
+            <button
+              type="button"
+              onClick={handleTrigger}
+              disabled={triggering}
+              className="app-btn-primary"
+            >
+              <AppIcon icon={Play} className="h-4 w-4" />
+              {triggering ? t('triggerAllSending') : t('triggerAll')}
+            </button>
+          </>
+        )}
+      />
 
       {/* Filter bar */}
-      <div className="rounded-xl border bg-card p-4 shadow-sm">
-        <div className="flex flex-wrap gap-3">
-            <div className="shrink-0">
-              <select
-                value={pendingInterface}
-                onChange={(e) => setPendingInterface(e.target.value)}
-                className="rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-              >
-                <option value="ARInvoice">ARInvoice</option>
-                <option value="IncomingPayment">IncomingPayment</option>
-                <option value="Delivery">Delivery</option>
-              </select>
-            </div>
-          <div className="relative flex-1 min-w-48">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+      <div className="rounded-2xl border bg-card p-4 shadow-sm md:p-5">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-12 xl:items-end">
+          <AppSelect
+            value={pendingInterface}
+            onChange={(e) => setPendingInterface(e.target.value)}
+            wrapperClassName="sm:col-span-1 xl:col-span-2"
+          >
+            <option value="ARInvoice">{t('interfaceTypeAR')}</option>
+            <option value="IncomingPayment">{t('interfaceTypeAP')}</option>
+            <option value="Delivery">{t('interfaceTypeDL')}</option>
+          </AppSelect>
+
+          <div className="relative sm:col-span-2 xl:col-span-3">
+            <AppIcon icon={Search} className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <input
               value={pendingSearch}
               onChange={(e) => setPendingSearch(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
               placeholder={t('searchPlaceholder')}
-              className="w-full rounded-md border bg-background pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              className="app-control pl-9"
             />
           </div>
-          <select
+
+          <AppSelect
             value={pendingStatus}
             onChange={(e) => setPendingStatus(e.target.value)}
-            className="rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            wrapperClassName="xl:col-span-2"
           >
             {STATUS_OPTIONS.map((s) => (
               <option key={s} value={s}>{s ? t(`statusLabel.${s}`) : t('allStatuses')}</option>
             ))}
-          </select>
-          <select
+          </AppSelect>
+
+          <AppSelect
             value={pendingBranch}
             onChange={(e) => setPendingBranch(e.target.value)}
-            className="w-40 rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            wrapperClassName="xl:col-span-2"
           >
             <option value="">{t('allBranches')}</option>
             {branchOptions.map((branch) => (
@@ -357,27 +357,28 @@ export default function MonitorPage() {
                 {branch.branchName || branch.branchCode}
               </option>
             ))}
-          </select>
+          </AppSelect>
+
           <DateInputDdMmYyyy
             value={pendingDateFrom}
             onChange={setPendingDateFrom}
-            className="w-36"
+            className="xl:col-span-1"
           />
-          <span className="self-center text-muted-foreground text-sm">{t('to')}</span>
           <DateInputDdMmYyyy
             value={pendingDateTo}
             min={pendingDateFrom || undefined}
             onChange={setPendingDateTo}
-            className="w-36"
+            className="xl:col-span-1"
           />
-          <button onClick={handleSearch}
-            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90">
-            {t('searchButton')}
-          </button>
-          <button onClick={handleClear}
-            className="flex items-center gap-1 rounded-md border px-3 py-2 text-sm hover:bg-muted">
-            <X className="h-4 w-4" /> {t('clearButton')}
-          </button>
+
+          <div className="flex flex-wrap gap-2 sm:col-span-2 xl:col-span-12">
+            <button type="button" onClick={handleSearch} className="app-btn-primary flex-1 sm:flex-none">
+              {t('searchButton')}
+            </button>
+            <button type="button" onClick={handleClear} className="app-btn-ghost flex-1 sm:flex-none">
+              <AppIcon icon={X} className="h-4 w-4" /> {t('clearButton')}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -401,7 +402,7 @@ export default function MonitorPage() {
             </thead>
             <tbody className="divide-y">
               {isLoading || isFetching ? (
-                <tr><td colSpan={10} className="px-4 py-8 text-center text-sm text-muted-foreground">กำลังโหลด...</td></tr>
+                <tr><td colSpan={10} className="px-4 py-8 text-center text-sm text-muted-foreground">{t('loading')}</td></tr>
               ) : rows.length === 0 ? (
                 <tr><td colSpan={10} className="px-4 py-8 text-center text-sm text-muted-foreground">{t('noData')}</td></tr>
               ) : rows.map((r) => (
@@ -412,7 +413,9 @@ export default function MonitorPage() {
                 >
                   <td className="px-4 py-2 font-mono text-xs">{r.posDocNo}</td>
                   <td className="px-4 py-2">{fmtDate(r.posDocDate)}</td>
-                  <td className="px-4 py-2 text-xs">{r.branchName || r.branchCode || '-'}</td>
+                  <td className="max-w-[10rem] truncate px-4 py-2.5 text-xs" title={r.branchName || r.branchCode || undefined}>
+                    {r.branchName || r.branchCode || '-'}
+                  </td>
                   <td className="px-4 py-2 text-xs">{r.channel ?? '-'}</td>
                   <td className="px-4 py-2 text-right font-mono text-xs">{fmt(r.docTotal)}</td>
                   <td className="px-4 py-2 font-mono text-xs text-muted-foreground">{r.sapDocNum ?? '-'}</td>
@@ -433,7 +436,7 @@ export default function MonitorPage() {
                           </>
                         ) : (
                           <>
-                            <Play className="h-3 w-3" /> {t('send')}
+                            <AppIcon icon={Play} className="h-3 w-3" /> {t('send')}
                           </>
                         )}
                       </button>
@@ -451,7 +454,7 @@ export default function MonitorPage() {
                           </>
                         ) : (
                           <>
-                            <RefreshCw className="h-3 w-3" /> {t('resend')}
+                            <AppIcon icon={RefreshCw} className="h-3 w-3" /> {t('resend')}
                           </>
                         )}
                       </button>
@@ -469,7 +472,7 @@ export default function MonitorPage() {
                           </>
                         ) : (
                           <>
-                            <RefreshCw className="h-3 w-3" /> {t('resend')}
+                            <AppIcon icon={RefreshCw} className="h-3 w-3" /> {t('resend')}
                           </>
                         )}
                       </button>
@@ -487,7 +490,7 @@ export default function MonitorPage() {
                           </>
                         ) : (
                           <>
-                            <RefreshCw className="h-3 w-3" /> {t('resend')}
+                            <AppIcon icon={RefreshCw} className="h-3 w-3" /> {t('resend')}
                           </>
                         )}
                       </button>
@@ -513,7 +516,7 @@ export default function MonitorPage() {
               {t('previous')}
             </button>
             <span className="text-muted-foreground">
-              หน้า {params.page ?? 1} / {totalPages}
+              {t('pageOf', { page: params.page ?? 1, total: totalPages })}
             </span>
             <button
               onClick={() => setParams((p) => ({ ...p, page: Math.min(totalPages, (p.page ?? 1) + 1) }))}

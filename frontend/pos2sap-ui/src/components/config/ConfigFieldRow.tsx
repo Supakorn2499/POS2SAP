@@ -1,4 +1,5 @@
 import { DateInputDdMmYyyy } from '@/components/DateInputDdMmYyyy';
+import { AppSelect } from '@/components/ui/AppSelect';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { getFieldMeta, type FieldType } from '@/lib/configLayout';
 import { cn } from '@/lib/utils';
@@ -29,28 +30,25 @@ export default function ConfigFieldRow({
   const hint = meta.hintKey ? t(meta.hintKey) : '';
   const displayHint = hint.startsWith('configHint.') ? '' : hint;
 
-  const inputClass =
-    'w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring font-mono';
+  const inputClass = 'app-control font-mono';
 
   function renderInput() {
     switch (meta.type as FieldType) {
       case 'boolean':
         return (
-          <select
+          <AppSelect
             value={value.toLowerCase() === 'true' ? 'true' : 'false'}
             onChange={(e) => onChange(storageKey, e.target.value)}
-            className={inputClass}
           >
             <option value="true">{t('configBool.true')}</option>
             <option value="false">{t('configBool.false')}</option>
-          </select>
+          </AppSelect>
         );
       case 'select':
         return (
-          <select
+          <AppSelect
             value={value}
             onChange={(e) => onChange(storageKey, e.target.value)}
-            className={inputClass}
           >
             <option value="">{t('configPlaceholder')}</option>
             {meta.options?.map((opt) => (
@@ -58,7 +56,7 @@ export default function ConfigFieldRow({
                 {opt}
               </option>
             ))}
-          </select>
+          </AppSelect>
         );
       case 'number':
         return (
@@ -95,7 +93,7 @@ export default function ConfigFieldRow({
                 type="button"
                 onClick={() => onChange(storageKey, '')}
                 disabled={!value}
-                className="shrink-0 rounded-md border px-3 py-2 text-xs hover:bg-muted disabled:opacity-40"
+                className="app-btn-ghost h-10 shrink-0 px-3 text-xs disabled:opacity-40"
               >
                 {t('configClearTime')}
               </button>
@@ -136,7 +134,7 @@ export default function ConfigFieldRow({
   }
 
   return (
-    <div className="grid gap-3 border-b border-border/60 px-5 py-4 last:border-b-0 md:grid-cols-[minmax(200px,280px)_1fr_auto] md:items-start">
+    <div className="grid gap-3 border-b border-border/60 px-4 py-4 last:border-b-0 sm:px-5 md:grid-cols-[minmax(160px,240px)_1fr_auto] md:items-start">
       <div>
         <p className="text-sm font-medium">{displayLabel}</p>
         <p className="mt-0.5 font-mono text-xs text-muted-foreground">{storageKey}</p>
@@ -147,12 +145,12 @@ export default function ConfigFieldRow({
           <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{displayHint}</p>
         )}
       </div>
-      <div>{renderInput()}</div>
+      <div className="min-w-0">{renderInput()}</div>
       <button
         type="button"
         onClick={() => onSave(storageKey, value)}
         disabled={saving}
-        className="h-9 shrink-0 self-start rounded-md border px-3 text-xs hover:bg-muted disabled:opacity-50 md:mt-0"
+        className="app-btn-ghost h-10 shrink-0 self-start px-3 text-xs disabled:opacity-50"
       >
         {t('save')}
       </button>

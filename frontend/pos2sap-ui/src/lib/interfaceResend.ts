@@ -11,10 +11,16 @@ export function interfaceTypeToTrigger(interfaceType: string): string {
 
 export function interfaceTypeLabel(interfaceType: string | undefined, t: (key: string) => string): string {
   switch (interfaceType) {
-    case 'AP': return t('interfaceTypeAP');
-    case 'DL': return t('interfaceTypeDL');
+    case 'AP':
+    case 'IncomingPayment':
+      return t('interfaceTypeAP');
+    case 'DL':
+    case 'Delivery':
+      return t('interfaceTypeDL');
     case 'AR':
-    default: return t('interfaceTypeAR');
+    case 'ARInvoice':
+    default:
+      return t('interfaceTypeAR');
   }
 }
 

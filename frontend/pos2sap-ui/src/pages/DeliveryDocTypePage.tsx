@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { FileSpreadsheet, Trash2, Truck } from 'lucide-react';
+import { AppIcon } from '@/components/ui/AppIcon';
 import { toast } from 'sonner';
 import deliveryDocTypeService from '@/services/deliveryDocTypeService';
 import {
@@ -179,7 +180,7 @@ export default function DeliveryDocTypePage() {
             disabled={isLoading || rows.length === 0}
             className="inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-2 text-sm font-medium hover:bg-muted disabled:opacity-40"
           >
-            <FileSpreadsheet className="h-4 w-4" />
+            <AppIcon icon={FileSpreadsheet} className="h-4 w-4" />
             {t('exportToExcel')}
           </button>
         }
@@ -224,7 +225,7 @@ export default function DeliveryDocTypePage() {
                           }}
                           className="rounded p-1.5 text-destructive hover:bg-destructive/10 disabled:opacity-30"
                         >
-                          <Trash2 className="h-3.5 w-3.5" />
+                          <AppIcon icon={Trash2} className="h-3.5 w-3.5" />
                         </button>
                       </td>
                     </tr>

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
 export const MAPPING_PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const;
-export const MAPPING_DEFAULT_PAGE_SIZE = 20;
+export const MAPPING_DEFAULT_PAGE_SIZE = 10;
 
 export function useMappingPagination<T>(
   items: T[],

@@ -94,6 +94,7 @@ builder.Services.AddScoped<IPosDataService, PosDataService>();
 builder.Services.AddScoped<IInterfaceJobService, InterfaceJobService>();
 builder.Services.AddScoped<IGlMappingService, GlMappingService>();
 builder.Services.AddScoped<IProductGroupMappingService, ProductGroupMappingService>();
+builder.Services.AddScoped<IShopMappingService, ShopMappingService>();
 builder.Services.AddScoped<IDeliveryDocTypeService, DeliveryDocTypeService>();
 
 // ------------------------------------------------------------------ Services — Background Job
@@ -215,6 +216,9 @@ using (var scope = app.Services.CreateScope())
 {
     var pgMapping = scope.ServiceProvider.GetRequiredService<IProductGroupMappingService>();
     await pgMapping.EnsureSchemaAsync();
+
+    var shopMapping = scope.ServiceProvider.GetRequiredService<IShopMappingService>();
+    await shopMapping.EnsureSchemaAsync();
 
     var dlDocTypes = scope.ServiceProvider.GetRequiredService<IDeliveryDocTypeService>();
     await dlDocTypes.EnsureSchemaAsync();

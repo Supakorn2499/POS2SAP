@@ -2,9 +2,9 @@ import type { LucideIcon } from 'lucide-react';
 import {
   LayoutDashboard,
   ListFilter,
-  FolderInput,
-  Map,
-  Layers,
+  FileInput,
+  Wallet,
+  Boxes,
   ScrollText,
   Settings,
   SunMoon,
@@ -93,7 +93,7 @@ const th: GuideDoc = {
     },
     {
       id: 'import',
-      icon: FolderInput,
+      icon: FileInput,
       title: 'Import',
       summary: 'ดึงบิลจาก POS เข้าคิว PENDING โดยยังไม่ส่ง SAP จนกว่าจะ Trigger',
       href: '/import',
@@ -108,7 +108,7 @@ const th: GuideDoc = {
     },
     {
       id: 'glmapping',
-      icon: Map,
+      icon: Wallet,
       title: 'GL Mapping',
       summary: 'จับคู่ประเภทการชำระเงิน POS กับบัญชี GL / หมวด SAP สำหรับ Incoming Payment',
       href: '/glmapping',
@@ -128,7 +128,7 @@ const th: GuideDoc = {
     },
     {
       id: 'pgmapping',
-      icon: Layers,
+      icon: Boxes,
       title: 'Product Group Mapping',
       summary: 'จับคู่กลุ่มสินค้า POS กับ Item Group ของ SAP',
       href: '/productgroupmapping',
@@ -264,7 +264,7 @@ const en: GuideDoc = {
     },
     {
       id: 'import',
-      icon: FolderInput,
+      icon: FileInput,
       title: 'Import',
       summary: 'Pull POS bills into PENDING logs without posting to SAP yet.',
       href: '/import',
@@ -277,7 +277,7 @@ const en: GuideDoc = {
     },
     {
       id: 'glmapping',
-      icon: Map,
+      icon: Wallet,
       title: 'GL Mapping',
       summary: 'Map POS pay types to SAP GL / payment categories for Incoming Payment.',
       href: '/glmapping',
@@ -297,7 +297,7 @@ const en: GuideDoc = {
     },
     {
       id: 'pgmapping',
-      icon: Layers,
+      icon: Boxes,
       title: 'Product Group Mapping',
       summary: 'Map POS product groups to SAP item groups.',
       href: '/productgroupmapping',

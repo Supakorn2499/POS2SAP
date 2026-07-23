@@ -1,10 +1,13 @@
 // src/pages/AppLogsPage.tsx
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { RefreshCw, Search, Trash2 } from 'lucide-react';
+import { RefreshCw, Search, Trash2, TerminalSquare } from 'lucide-react';
 import { toast } from 'sonner';
 import appLogsService from '@/services/appLogsService';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { AppIcon } from '@/components/ui/AppIcon';
+import { AppSelect } from '@/components/ui/AppSelect';
+import { PageHeader } from '@/components/PageHeader';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { cn, fmtDatetime } from '@/lib/utils';
 
@@ -103,46 +106,46 @@ export default function AppLogsPage() {
         onCancel={() => setClearMode(null)}
       />
 
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold">{t('appLogs')}</h2>
-          <p className="text-sm text-muted-foreground">{t('appLogsSubtitle')}</p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => setClearMode('one')}
-            disabled={!selected || clearing}
-            className="inline-flex items-center gap-2 rounded-lg border border-destructive/30 px-3 py-2 text-sm font-medium text-destructive hover:bg-destructive/10 disabled:opacity-50"
-          >
-            <Trash2 className="h-4 w-4" />
-            {t('appLogsClear')}
-          </button>
-          <button
-            type="button"
-            onClick={() => setClearMode('all')}
-            disabled={files.length === 0 || clearing}
-            className="inline-flex items-center gap-2 rounded-lg border border-destructive/30 px-3 py-2 text-sm font-medium text-destructive hover:bg-destructive/10 disabled:opacity-50"
-          >
-            <Trash2 className="h-4 w-4" />
-            {t('appLogsClearAll')}
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleRefresh()}
-            className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium hover:bg-muted"
-          >
-            <RefreshCw className={cn('h-4 w-4', (filesQuery.isFetching || contentQuery.isFetching) && 'animate-spin')} />
-            {t('refresh')}
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        icon={TerminalSquare}
+        title={t('appLogs')}
+        subtitle={t('appLogsSubtitle')}
+        actions={(
+          <>
+            <button
+              type="button"
+              onClick={() => setClearMode('one')}
+              disabled={!selected || clearing}
+              className="inline-flex items-center gap-2 rounded-xl border border-destructive/30 px-3 py-2 text-sm font-medium text-destructive transition hover:bg-destructive/10 disabled:opacity-50"
+            >
+              <AppIcon icon={Trash2} className="h-4 w-4" />
+              {t('appLogsClear')}
+            </button>
+            <button
+              type="button"
+              onClick={() => setClearMode('all')}
+              disabled={files.length === 0 || clearing}
+              className="inline-flex items-center gap-2 rounded-xl border border-destructive/30 px-3 py-2 text-sm font-medium text-destructive transition hover:bg-destructive/10 disabled:opacity-50"
+            >
+              <AppIcon icon={Trash2} className="h-4 w-4" />
+              {t('appLogsClearAll')}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleRefresh()}
+              className="inline-flex items-center gap-2 rounded-xl border border-input bg-background px-3 py-2 text-sm font-medium shadow-sm transition hover:bg-muted"
+            >
+              <AppIcon icon={RefreshCw} className={cn('h-4 w-4', (filesQuery.isFetching || contentQuery.isFetching) && 'animate-spin')} />
+              {t('refresh')}
+            </button>
+          </>
+        )}
+      />
 
-      <div className="flex flex-wrap gap-2 rounded-xl border bg-card p-3">
-        <select
+      <div className="grid grid-cols-1 gap-2 rounded-2xl border bg-card p-3 sm:grid-cols-2 xl:grid-cols-[minmax(14rem,1.2fr)_auto_minmax(12rem,1fr)_auto]">
+        <AppSelect
           value={selected}
           onChange={(e) => setSelected(e.target.value)}
-          className="min-w-[220px] rounded-md border bg-background px-3 py-2 text-sm"
         >
           {files.length === 0 && <option value="">{t('appLogsEmpty')}</option>}
           {files.map((f) => (
@@ -150,20 +153,19 @@ export default function AppLogsPage() {
               {f.fileName} ({formatBytes(f.sizeBytes)})
             </option>
           ))}
-        </select>
+        </AppSelect>
 
-        <select
+        <AppSelect
           value={lines}
           onChange={(e) => setLines(Number(e.target.value))}
-          className="rounded-md border bg-background px-3 py-2 text-sm"
         >
           {[200, 500, 1000, 2000, 5000].map((n) => (
             <option key={n} value={n}>{t('appLogsLastLines', { n })}</option>
           ))}
-        </select>
+        </AppSelect>
 
-        <div className="relative min-w-[220px] flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <div className="relative min-w-0 sm:col-span-2 xl:col-span-1">
+          <AppIcon icon={Search} className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -171,13 +173,13 @@ export default function AppLogsPage() {
               if (e.key === 'Enter') setCommittedSearch(search.trim());
             }}
             placeholder={t('appLogsSearchPlaceholder')}
-            className="w-full rounded-md border bg-background py-2 pl-9 pr-3 text-sm"
+            className="app-control pl-9"
           />
         </div>
         <button
           type="button"
           onClick={() => setCommittedSearch(search.trim())}
-          className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+          className="app-btn-primary w-full sm:col-span-2 xl:col-span-1 xl:w-auto"
         >
           {t('searchButton')}
         </button>

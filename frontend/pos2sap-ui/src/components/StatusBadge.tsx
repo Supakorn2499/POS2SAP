@@ -1,28 +1,36 @@
 // src/components/StatusBadge.tsx
+import { Clock, Loader2, CheckCircle2, XCircle, RotateCw } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { AppIcon } from '@/components/ui/AppIcon';
 import { useLanguage } from '@/contexts/LanguageContext';
 import type { InterfaceStatus } from '@/types/monitor';
 
-const statusConfig: Record<InterfaceStatus, { labelKey: string; className: string }> = {
+const statusConfig: Record<InterfaceStatus, { labelKey: string; className: string; icon: LucideIcon }> = {
   PENDING: {
     labelKey: 'statusLabel.PENDING',
-    className: 'bg-yellow-100 text-yellow-800 border-yellow-300 dark:bg-amber-950/70 dark:text-amber-200 dark:border-amber-500/40',
+    className: 'bg-muted text-muted-foreground border-border',
+    icon: Clock,
   },
   PROCESSING: {
     labelKey: 'statusLabel.PROCESSING',
-    className: 'bg-blue-100 text-blue-800 border-blue-300 dark:bg-sky-950/70 dark:text-sky-200 dark:border-sky-500/40',
+    className: 'bg-muted text-sky-700 border-border dark:text-sky-400',
+    icon: Loader2,
   },
   SUCCESS: {
     labelKey: 'statusLabel.SUCCESS',
-    className: 'bg-green-100 text-green-800 border-green-300 dark:bg-emerald-950/70 dark:text-emerald-200 dark:border-emerald-500/40',
+    className: 'bg-muted text-emerald-700 border-border dark:text-emerald-400',
+    icon: CheckCircle2,
   },
   FAILED: {
     labelKey: 'statusLabel.FAILED',
-    className: 'bg-red-100 text-red-800 border-red-300 dark:bg-rose-950/70 dark:text-rose-200 dark:border-rose-500/40',
+    className: 'bg-muted text-rose-700 border-border dark:text-rose-400',
+    icon: XCircle,
   },
   RETRY: {
     labelKey: 'statusLabel.RETRY',
-    className: 'bg-orange-100 text-orange-800 border-orange-300 dark:bg-orange-950/70 dark:text-orange-200 dark:border-orange-500/40',
+    className: 'bg-muted text-orange-700 border-border dark:text-orange-400',
+    icon: RotateCw,
   },
 };
 
@@ -38,11 +46,22 @@ export function StatusBadge({ status, size = 'md' }: Props) {
   const label = config ? t(config.labelKey) : String(status);
 
   return (
-    <span className={cn(
-      'inline-flex items-center rounded-full border font-medium',
-      size === 'sm' ? 'px-2 py-0.5 text-xs' : 'px-2.5 py-0.5 text-sm',
-      config?.className ?? 'bg-gray-100 text-gray-700 border-gray-300 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-600'
-    )}>
+    <span
+      className={cn(
+        'inline-flex items-center gap-1 rounded-full border font-medium tracking-tight',
+        size === 'sm' ? 'px-2 py-0.5 text-[11px]' : 'px-2.5 py-0.5 text-xs',
+        config?.className ?? 'bg-muted text-muted-foreground border-border'
+      )}
+    >
+      {config && (
+        <AppIcon
+          icon={config.icon}
+          className={cn(
+            size === 'sm' ? 'h-3 w-3' : 'h-3.5 w-3.5',
+            baseStatus === 'PROCESSING' && 'animate-spin'
+          )}
+        />
+      )}
       {label}
     </span>
   );

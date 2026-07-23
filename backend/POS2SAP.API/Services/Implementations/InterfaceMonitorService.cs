@@ -559,10 +559,11 @@ public class InterfaceMonitorService : IInterfaceMonitorService
     {
         var sql = @"
             SELECT
-                ISNULL(NULLIF(sd.PTTShopCode, ''), sd.shopcode) AS BranchCode,
-                sd.shopname                                     AS BranchName
+                ISNULL(NULLIF(LTRIM(RTRIM(sm.SapBranchCode)), ''), ISNULL(NULLIF(sd.PTTShopCode, ''), sd.shopcode)) AS BranchCode,
+                ISNULL(NULLIF(LTRIM(RTRIM(sm.SapBranchName)), ''), sd.shopname) AS BranchName
             FROM shop_data sd
-            ORDER BY sd.shopname";
+            LEFT JOIN shop_sap_mapping sm ON sm.ShopID = sd.ShopID AND sm.IsActive = 1
+            ORDER BY BranchName";
 
         return (await _db.QueryAsync<BranchOptionDto>(sql)).ToList();
     }

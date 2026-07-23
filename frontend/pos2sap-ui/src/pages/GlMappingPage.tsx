@@ -1,7 +1,9 @@
 // src/pages/GlMappingPage.tsx
 import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Map, Trash2, AlertTriangle } from 'lucide-react';
+import { Wallet, Trash2, AlertTriangle } from 'lucide-react';
+import { AppIcon } from '@/components/ui/AppIcon';
+import { AppSelect } from '@/components/ui/AppSelect';
 import { toast } from 'sonner';
 import glMappingService from '@/services/glMappingService';
 import {
@@ -397,7 +399,7 @@ export default function GlMappingPage() {
   return (
     <div className="space-y-6 pb-24">
       <MappingPageHeader
-        icon={Map}
+        icon={Wallet}
         title={t('glMappingTitle')}
         subtitle={t('glMappingSubtitle')}
       />
@@ -420,13 +422,13 @@ export default function GlMappingPage() {
 
       {stats.pendingGl > 0 && (
         <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/40 dark:bg-amber-950/50 dark:text-amber-200">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <AppIcon icon={AlertTriangle} className="mt-0.5 h-4 w-4 shrink-0" />
           <span>{t('glMappingPendingGlHint')}</span>
         </div>
       )}
 
       <div className="flex items-start gap-2 rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900 dark:border-sky-500/40 dark:bg-sky-950/40 dark:text-sky-100">
-        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+        <AppIcon icon={AlertTriangle} className="mt-0.5 h-4 w-4 shrink-0" />
         <span>{t('glMappingCreditCardHint')}</span>
       </div>
 
@@ -450,18 +452,18 @@ export default function GlMappingPage() {
             <label htmlFor="categoryFilter" className="whitespace-nowrap text-sm font-medium">
               {t('glMappingFilterCategory')}
             </label>
-            <select
+            <AppSelect
               id="categoryFilter"
               value={categoryFilter}
               onChange={(e) => setCategoryFilter(e.target.value as CategoryFilter)}
-              className="min-w-44 rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              wrapperClassName="min-w-[11rem]"
             >
               <option value="">{t('glMappingFilterAll')}</option>
               {CATEGORIES.map((c) => (
                 <option key={c} value={c}>{categoryLabel(c)}</option>
               ))}
               <option value="PENDING_GL">{t('glMappingFilterPendingGl')}</option>
-            </select>
+            </AppSelect>
           </div>
         )}
         actions={(
@@ -522,15 +524,16 @@ export default function GlMappingPage() {
                     <td className="px-3 py-1.5">
                       <div className={cn('flex items-center gap-2 border-l-4 pl-2', CATEGORY_BORDER[e.sapPayCategory])}>
                         <span className={cn('h-2.5 w-2.5 shrink-0 rounded-full', CATEGORY_DOT[e.sapPayCategory])} />
-                        <select
+                        <AppSelect
                           value={e.sapPayCategory}
                           onChange={(ev) => setField(row.payTypeID, 'sapPayCategory', ev.target.value as SapPayCategory)}
-                          className={cn(mappingInputClass, 'min-w-32 cursor-pointer font-medium')}
+                          className="min-w-32 font-medium"
+                          wrapperClassName="min-w-32"
                         >
                           {CATEGORIES.map((c) => (
                             <option key={c} value={c}>{categoryLabel(c)}</option>
                           ))}
-                        </select>
+                        </AppSelect>
                       </div>
                     </td>
                     <td className="px-3 py-1.5">
@@ -592,7 +595,7 @@ export default function GlMappingPage() {
                         title={t('glMappingDelete')}
                         className="rounded p-1.5 text-destructive hover:bg-destructive/10 disabled:opacity-30"
                       >
-                        <Trash2 className="h-3.5 w-3.5" />
+                        <AppIcon icon={Trash2} className="h-3.5 w-3.5" />
                       </button>
                     </td>
                   </tr>

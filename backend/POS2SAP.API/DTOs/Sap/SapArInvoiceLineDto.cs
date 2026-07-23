@@ -12,6 +12,8 @@ public class SapArInvoiceLineDto
     public string UomCode { get; set; } = string.Empty;
     public decimal DiscPrcnt { get; set; }
     public decimal Price { get; set; }
+    /// <summary>ส่วนลดมูลค่าก่อน VAT (ex-VAT) เมื่อมี DiscPrcnt รายบรรทัด; ไม่มีส่วนลด = 0</summary>
+    public decimal DiscAmtBfVat { get; set; }
     public decimal PriceAfVat { get; set; }
     public decimal VatPrcnt { get; set; }
     public string VatGroup { get; set; } = string.Empty;

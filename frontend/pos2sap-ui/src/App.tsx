@@ -9,6 +9,7 @@ import AppLogsPage from '@/pages/AppLogsPage';
 import ImportPage from '@/pages/ImportPage';
 import GlMappingPage from '@/pages/GlMappingPage';
 import ProductGroupMappingPage from '@/pages/ProductGroupMappingPage';
+import ShopMappingPage from '@/pages/ShopMappingPage';
 import UserGuidePage from '@/pages/UserGuidePage';
 import LoginPage from '@/pages/LoginPage';
 import { useAuth } from '@/contexts/AuthContext';
@@ -37,6 +38,7 @@ function App() {
           <Route path="/import" element={<ImportPage />} />
           <Route path="/glmapping" element={<GlMappingPage />} />
           <Route path="/productgroupmapping" element={<ProductGroupMappingPage />} />
+          <Route path="/shopmapping" element={<ShopMappingPage />} />
           <Route path="/app-logs" element={<AppLogsPage />} />
           <Route path="/guide" element={<UserGuidePage />} />
           <Route path="/config" element={<ConfigPage />} />

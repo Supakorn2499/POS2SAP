@@ -155,7 +155,23 @@ public class ArInvoiceMappingTests
 
         Assert.Equal(10m, bill.DiscPrcnt);
         Assert.Equal(900, bill.DocTotal);
+        // billDiscAmt 100 VAT-inc → DiscAmtBfVat = 100/1.07 ≈ 93.46
+        Assert.Equal(93.46m, bill.DiscAmtBfVat);
         Assert.All(bill.DocumentLines, l => Assert.Equal(0m, l.DiscPrcnt));
+        Assert.All(bill.DocumentLines, l => Assert.Equal(0m, l.DiscAmtBfVat));
+    }
+
+    [Fact]
+    public void BillDiscount_DiscAmtBfVat_MatchesSample14_49()
+    {
+        // RC01072026/02472 style: retail 155, 10% bill disc 15.5 → 15.5/1.07 = 14.49
+        var bill = Build(
+            Head(retail: 155, pay: 139.5m, receiptDiscount: 15.5m),
+            [Line("Fo7_6", 155, 155)]);
+
+        Assert.Equal(10m, bill.DiscPrcnt);
+        Assert.Equal(14.49m, bill.DiscAmtBfVat);
+        Assert.Equal(0m, bill.DocumentLines[0].DiscAmtBfVat);
     }
 
     [Fact]
@@ -177,9 +193,11 @@ public class ArInvoiceMappingTests
 
         Assert.Equal(13m, bill.DiscPrcnt);
         Assert.Equal(1124.47m, bill.DocTotal);
+        Assert.Equal(142.76m, bill.DiscAmtBfVat); // 152.75 / 1.07
         var products = bill.DocumentLines.Where(l => l.ItemCode != gbVar.SapArItemServiceCharge).ToList();
         Assert.Equal(7, products.Count);
         Assert.All(products, l => Assert.Equal(0m, l.DiscPrcnt));
+        Assert.All(products, l => Assert.Equal(0m, l.DiscAmtBfVat));
         Assert.Equal(85m, products.Single(l => l.ItemCode == "BR010_10").GTotal);
         Assert.Equal(275m, products.Single(l => l.ItemCode == "Fo6_20").GTotal);
         var sc = bill.DocumentLines.Single(l => l.ItemCode == gbVar.SapArItemServiceCharge);
@@ -200,6 +218,7 @@ public class ArInvoiceMappingTests
             ]);
 
         Assert.Equal(0m, bill.DiscPrcnt);
+        Assert.Equal(0m, bill.DiscAmtBfVat);
         Assert.Equal(15m, bill.DocumentLines.Single(l => l.ItemCode == "T04_2").DiscPrcnt);
         Assert.Equal(10m, bill.DocumentLines.Single(l => l.ItemCode == "Fo6_18").DiscPrcnt);
         Assert.Equal(0m, bill.DocumentLines.Single(l => l.ItemCode == "Fo4_5").DiscPrcnt);
@@ -218,6 +237,16 @@ public class ArInvoiceMappingTests
         Assert.Single(bill.DocumentLines);
         Assert.Equal(15m, bill.DocumentLines[0].DiscPrcnt);
         Assert.Equal(186.15m, bill.DocumentLines[0].GTotal);
+        // Price = 219/1.07 ≈ 204.67; DiscAmtBfVat = 204.67 * 15% = 30.70
+        Assert.Equal(30.70m, bill.DocumentLines[0].DiscAmtBfVat);
+    }
+
+    [Fact]
+    public void LineDiscount_DiscAmtBfVat_MatchesPriceTimesDiscPrcnt()
+    {
+        // S006 example: Price 120.56, DiscPrcnt 62.02 → DiscAmtBfVat 74.77
+        Assert.Equal(74.77m, PosDataService.ComputeDiscAmtBfVat(120.56m, 1m, 62.02m));
+        Assert.Equal(0m, PosDataService.ComputeDiscAmtBfVat(120.56m, 1m, 0m));
     }
 
     [Fact]
@@ -313,8 +342,8 @@ public class ArInvoiceMappingTests
     public void Freebie_UsesPromotionName_WhenPromotionIdGreaterThanZero()
     {
         var extras = new ArSynthExtras();
-        // bill-level promo (OrderDetailID=0) matching freebie retail — like RC01072026/02492
-        extras.Promos.Add(new ArPromoRow(0, 170, 135m, "Redeem 12Point Pecan Caramel Custard"));
+        // non-redeem freebie promo name (not "Redeem N Point")
+        extras.Promos.Add(new ArPromoRow(0, 171, 135m, "Buy1Get1 Pecan Caramel Custard"));
         extras.Promos.Add(new ArPromoRow(0, 0, 50m, "should-ignore-bill-end")); // PromotionID=0 = ส่วนลดท้ายบิล
 
         var bill = Build(
@@ -327,7 +356,8 @@ public class ArInvoiceMappingTests
 
         var free = bill.DocumentLines.Single(l => l.ItemCategory == "OP" && l.GTotal < 0);
         Assert.Equal("", free.ItemCode);
-        Assert.Equal("Redeem 12Point Pecan Caramel Custard", free.Text);
+        Assert.Equal("Buy1Get1 Pecan Caramel Custard", free.Text);
+        Assert.Equal(0, bill.CustRedeemPoing);
     }
 
     [Fact]
@@ -363,6 +393,43 @@ public class ArInvoiceMappingTests
         Assert.Equal(-1, rd.Quantity);
         Assert.Contains("100", rd.Text);
         Assert.DoesNotContain(bill.DocumentLines, l => l.ItemCategory == gbVar.SapArCatFreebie);
+    }
+
+    [Fact]
+    public void ParseRedeemPointsFromPromoName_ReadsRedeemNPoint()
+    {
+        Assert.Equal(12, ParseRedeemPointsFromPromoName("Redeem 12Point \tPecan Caramel Custard"));
+        Assert.Equal(10, ParseRedeemPointsFromPromoName("Redeem 10 Piont พานาคอตต้า_Panna Cotta"));
+        Assert.Equal(10, ParseRedeemPointsFromPromoName("Redeem10 Point พานาคอตต้า_Panna Cotta"));
+        Assert.Equal(0, ParseRedeemPointsFromPromoName("10 Point")); // no Redeem keyword
+        Assert.Equal(0, ParseRedeemPointsFromPromoName(""));
+    }
+
+    [Fact]
+    public void RedeemPromoName_FillsCustRedeemPoing_WhenHistoryMissing()
+    {
+        // RC01072026/02492 — RewardPointHistory has earn only; points live in promo name
+        var extras = new ArSynthExtras();
+        extras.Promos.Add(new ArPromoRow(0, 170, 135m, "Redeem 12Point \tPecan Caramel Custard"));
+
+        var bill = Build(
+            Head(retail: 1195, pay: 1166, redeemPoint: 0, receiptDiscount: 135, billPoint: 5, balancePoint: 22,
+                memberNo: "0886452229"),
+            [
+                Line("Fo8_3", 295, 295),
+                Line("D1_7", 135, 0, text: "Pecan Caramel Custard"),
+                Line("Fo7_3", 145, 145),
+                Line("Fo6_22", 165, 165),
+                Line("Fo7_1", 155, 155),
+                Line("BR01_2", 25, 25),
+                Line("Fo6_20", 275, 275)
+            ],
+            extras);
+
+        Assert.Equal(12, bill.CustRedeemPoing);
+        Assert.Equal(5, bill.CustBillPoint);
+        var rd = bill.DocumentLines.Single(l => l.ItemCode == gbVar.SapArItemRedeem);
+        Assert.Contains("12", rd.Text);
     }
 
     [Fact]

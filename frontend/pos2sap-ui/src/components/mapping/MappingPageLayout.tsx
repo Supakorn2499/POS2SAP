@@ -2,12 +2,14 @@ import type { LucideIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Save, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { AppIcon } from '@/components/ui/AppIcon';
+import { PageHeader } from '@/components/PageHeader';
 
 export const mappingTableHeadClass =
   'bg-muted/50 text-xs font-semibold text-muted-foreground uppercase';
 export const mappingTableClass = 'w-full text-sm';
 export const mappingInputClass =
-  'w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-40';
+  'app-control h-9 rounded-lg px-2 py-1.5 text-sm';
 
 interface MappingPageHeaderProps {
   icon: LucideIcon;
@@ -15,16 +17,8 @@ interface MappingPageHeaderProps {
   subtitle: string;
 }
 
-export function MappingPageHeader({ icon: Icon, title, subtitle }: MappingPageHeaderProps) {
-  return (
-    <div>
-      <div className="flex items-center gap-2">
-        <Icon className="h-6 w-6 text-primary shrink-0" />
-        <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
-      </div>
-      <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>
-    </div>
-  );
+export function MappingPageHeader({ icon, title, subtitle }: MappingPageHeaderProps) {
+  return <PageHeader icon={icon} title={title} subtitle={subtitle} />;
 }
 
 export interface MappingStatItem {
@@ -36,19 +30,22 @@ export interface MappingStatItem {
 
 export function MappingStatGrid({ items }: { items: MappingStatItem[] }) {
   return (
-    <div className={cn('grid gap-3', items.length <= 3 ? 'sm:grid-cols-3' : 'grid-cols-2 sm:grid-cols-4')}>
+    <div className={cn(
+      'grid gap-3',
+      items.length <= 3 ? 'grid-cols-1 sm:grid-cols-3' : 'grid-cols-2 xl:grid-cols-4'
+    )}>
       {items.map((s) => (
         <div
           key={s.label}
           className={cn(
-            'rounded-xl border bg-card px-4 py-3',
+            'rounded-2xl border bg-card px-4 py-3 shadow-sm',
             s.warn && 'border-amber-300 bg-amber-50/50 dark:border-amber-500/40 dark:bg-amber-950/50'
           )}
         >
-          <p className="text-xs text-muted-foreground">{s.label}</p>
+          <p className="text-xs font-medium text-muted-foreground">{s.label}</p>
           <p
             className={cn(
-              'mt-1 text-2xl font-semibold',
+              'mt-1 text-2xl font-semibold tracking-tight tabular-nums',
               s.warn && 'text-amber-700 dark:text-amber-300',
               s.accent === 'green' && 'text-green-700 dark:text-emerald-300',
               s.accent === 'muted' && 'text-muted-foreground'
@@ -84,28 +81,30 @@ export function MappingToolbar({
   clearLabel,
 }: MappingToolbarProps) {
   return (
-    <div className="flex flex-wrap items-center gap-3">
-      <div className="relative min-w-48 flex-1 max-w-md">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+    <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center xl:grid-cols-[minmax(14rem,1fr)_auto_auto] xl:gap-3">
+      <div className="relative min-w-0">
+        <AppIcon icon={Search} className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <input
           type="search"
           value={search}
           onChange={(e) => onSearchChange(e.target.value)}
           placeholder={searchPlaceholder}
-          className="w-full rounded-md border bg-background py-2 pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          className="app-control pl-9"
         />
       </div>
-      {filter}
-      {showClear && onClear && (
-        <button
-          type="button"
-          onClick={onClear}
-          className="text-sm text-muted-foreground underline hover:text-foreground"
-        >
-          {clearLabel}
-        </button>
-      )}
-      {actions}
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        {filter}
+        {showClear && onClear && (
+          <button
+            type="button"
+            onClick={onClear}
+            className="text-sm text-muted-foreground underline hover:text-foreground"
+          >
+            {clearLabel}
+          </button>
+        )}
+      </div>
+      {actions && <div className="flex flex-wrap items-center gap-2 md:justify-end">{actions}</div>}
     </div>
   );
 }
@@ -136,13 +135,13 @@ export function MappingSection({
       <div
         className={cn(
           'border-b px-4 py-3',
-          isMapped ? 'bg-green-50/80' : 'bg-muted/40'
+          isMapped ? 'bg-emerald-50/80 dark:bg-emerald-950/30' : 'bg-muted/40'
         )}
       >
         <h2
           className={cn(
             'text-sm font-semibold',
-            isMapped ? 'text-green-900' : 'text-foreground'
+            isMapped ? 'text-emerald-900 dark:text-emerald-100' : 'text-foreground'
           )}
         >
           {title}
@@ -152,7 +151,7 @@ export function MappingSection({
           <p
             className={cn(
               'mt-0.5 text-xs',
-              isMapped ? 'text-green-800/80' : 'text-muted-foreground'
+              isMapped ? 'text-emerald-800/80 dark:text-emerald-200/70' : 'text-muted-foreground'
             )}
           >
             {hint}
@@ -282,7 +281,7 @@ export function MappingUnsavedBar({
   if (!visible) return null;
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-40 border-t bg-background/95 px-6 py-4 shadow-lg backdrop-blur sm:left-56">
+    <div className="fixed bottom-0 right-0 z-40 border-t bg-background/95 px-4 py-4 shadow-lg backdrop-blur md:px-6 left-[var(--app-sidebar-w,0px)]">
       <div className="mx-auto flex max-w-5xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm font-medium text-amber-800 dark:text-amber-200">{message}</p>
         <div className="flex flex-wrap gap-2">
@@ -300,7 +299,7 @@ export function MappingUnsavedBar({
             disabled={saving}
             className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
           >
-            <Save className="h-4 w-4" />
+            <AppIcon icon={Save} className="h-4 w-4" />
             {saveLabel}
           </button>
         </div>
